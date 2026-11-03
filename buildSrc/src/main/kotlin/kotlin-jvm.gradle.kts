@@ -5,11 +5,18 @@ import org.gradle.api.tasks.testing.logging.TestLogEvent
 
 plugins {
     kotlin("jvm")
+    id("com.ncorti.ktfmt.gradle")
 }
 
 kotlin {
     jvmToolchain(21)
     explicitApiWarning()
+}
+
+ktfmt {
+    kotlinLangStyle()
+    maxWidth.set(100)
+    removeUnusedImports.set(true)
 }
 
 val versionCatalog = extensions.getByType<VersionCatalogsExtension>().named("libs")
@@ -26,7 +33,7 @@ tasks.withType<Test>().configureEach {
         events(
             TestLogEvent.FAILED,
             TestLogEvent.PASSED,
-            TestLogEvent.SKIPPED
+            TestLogEvent.SKIPPED,
         )
     }
 }

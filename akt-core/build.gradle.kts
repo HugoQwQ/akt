@@ -1,3 +1,1 @@
-plugins {
-    id("buildsrc.convention.kotlin-library")
-}
+plugins { id("buildsrc.convention.kotlin-library") }

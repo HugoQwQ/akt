@@ -16,18 +16,22 @@
 - [x] render dialogue, speaker names, choices, images, placeholders, and text.
 - [x] add story, archive, and shader resource tests.
 - [x] verify build, startup, resize, capture, and graceful cleanup.
+- [x] add ktfmt checks for source, scripts, and `buildSrc`.
+- [x] add github actions formatting checks on every push.
+- [x] add tagged release builds for version and alpha tags.
+- [x] add an append-only maven repository on github pages.
 
 ## release blockers
 
 ### public api and documentation
 
-- [ ] freeze the `0.1.0` public api and remove the `-snapshot` version.
-- [ ] add kdoc to every public type, function, property, and error condition.
-- [ ] document supported jvm versions and vulkan requirements.
-- [ ] document the module dependency graph and renderer factory contract.
-- [ ] add a migration policy for changes after `0.1.0`.
-- [ ] add a complete authoring guide with renderer-independent usage.
-- [ ] publish api documentation from the release build.
+- [x] freeze the `0.1.0` public api and remove the `-snapshot` version.
+- [x] add kdoc to every public type, function, property, and error condition.
+- [x] document supported jvm versions and vulkan requirements.
+- [x] document the module dependency graph and renderer factory contract.
+- [x] add a migration policy for changes after `0.1.0`.
+- [x] add a complete authoring guide with renderer-independent usage.
+- [x] publish api documentation from the release build.
 
 ### story and runtime
 
@@ -77,15 +81,15 @@
 
 ### packaging and release
 
-- [ ] configure maven publication for all library modules.
-- [ ] publish sources and javadoc artifacts.
-- [ ] make desktop natives reproducible per target platform.
+- [x] configure maven publication for all library modules.
+- [x] publish sources and javadoc artifacts.
+- [x] make desktop natives reproducible per target platform.
 - [ ] add a distributable example jar or native image.
 - [ ] add signed windows release packaging instructions.
 - [ ] verify distribution works from a path containing spaces.
 - [ ] create the `0.1.0` changelog and release notes.
 - [ ] add repository license, contribution, and security documents.
-- [ ] add a ci workflow for build and non-graphical tests.
+- [x] add a ci workflow for build and non-graphical tests.
 
 ## release candidate checklist
 

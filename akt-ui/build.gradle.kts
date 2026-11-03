@@ -1,7 +1,3 @@
-plugins {
-    id("buildsrc.convention.kotlin-library")
-}
+plugins { id("buildsrc.convention.kotlin-library") }
 
-dependencies {
-    api(project(":akt-core"))
-}
+dependencies { api(project(":akt-core")) }

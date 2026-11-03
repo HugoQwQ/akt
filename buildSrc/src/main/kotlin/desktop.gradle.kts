@@ -2,22 +2,18 @@ package buildsrc.convention
 
 import org.gradle.api.artifacts.VersionCatalogsExtension
 
-plugins {
-    id("buildsrc.convention.kotlin-library")
-}
+plugins { id("buildsrc.convention.kotlin-library") }
 
 val versionCatalog = extensions.getByType<VersionCatalogsExtension>().named("libs")
 val lwjglVersion: String = versionCatalog.findVersion("lwjgl").get().requiredVersion
-val operatingSystem: String = System.getProperty("os.name").lowercase()
-val architecture: String = System.getProperty("os.arch").lowercase()
-
-val nativesClassifier: String = when {
-    operatingSystem.contains("win") -> "natives-windows"
-    operatingSystem.contains("mac") && architecture.contains("aarch64") -> "natives-macos-arm64"
-    operatingSystem.contains("mac") -> "natives-macos"
-    architecture.contains("aarch64") -> "natives-linux-arm64"
-    else -> "natives-linux"
-}
+val nativeClassifiers =
+    listOf(
+        "natives-windows",
+        "natives-linux",
+        "natives-linux-arm64",
+        "natives-macos",
+        "natives-macos-arm64",
+    )
 
 dependencies {
     implementation(platform("org.lwjgl:lwjgl-bom:$lwjglVersion"))
@@ -26,7 +22,9 @@ dependencies {
     implementation(versionCatalog.findLibrary("lwjgl-vulkan").get())
     implementation(versionCatalog.findLibrary("lwjgl-stb").get())
 
-    runtimeOnly("org.lwjgl:lwjgl::$nativesClassifier")
-    runtimeOnly("org.lwjgl:lwjgl-glfw::$nativesClassifier")
-    runtimeOnly("org.lwjgl:lwjgl-stb::$nativesClassifier")
+    nativeClassifiers.forEach { classifier ->
+        runtimeOnly("org.lwjgl:lwjgl::$classifier")
+        runtimeOnly("org.lwjgl:lwjgl-glfw::$classifier")
+        runtimeOnly("org.lwjgl:lwjgl-stb::$classifier")
+    }
 }

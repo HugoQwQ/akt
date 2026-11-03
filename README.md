@@ -8,6 +8,27 @@ a visual novel game framework written in kotlin.
 .\gradlew.bat build
 ```
 
+check or apply kotlin formatting:
+
+```powershell
+.\gradlew.bat ktfmtCheck ktfmtCheckScripts
+.\gradlew.bat -p buildSrc ktfmtCheck ktfmtCheckScripts
+.\gradlew.bat ktfmtFormat
+.\gradlew.bat -p buildSrc ktfmtFormat
+```
+
+generate the public api documentation:
+
+```powershell
+.\gradlew.bat apiDocs
+```
+
+run the local release verification build, including api documentation:
+
+```powershell
+.\gradlew.bat release
+```
+
 ## run the example
 
 ```powershell

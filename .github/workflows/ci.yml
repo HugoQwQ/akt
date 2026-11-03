@@ -1,0 +1,83 @@
+name: format and release
+
+on:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  format:
+    name: ktfmt check
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: set up java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: set up gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: check kotlin formatting
+        run: |
+          chmod +x gradlew
+          ./gradlew ktfmtCheck ktfmtCheckScripts --console=plain
+          ./gradlew -p buildSrc ktfmtCheck ktfmtCheckScripts --console=plain
+
+  build:
+    name: release build
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: format
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: validate tag
+        shell: bash
+        run: |
+          if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+(\.[0-9]+)*(-alpha)?$ ]]; then
+            echo "::error::tag must match v<version> or v<version>-alpha"
+            exit 1
+          fi
+
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: set up java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: set up gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: build release
+        run: |
+          chmod +x gradlew
+          release_version="${GITHUB_REF_NAME#v}"
+          ./gradlew release -Pversion="${release_version}" --console=plain
+
+      - name: upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: akt-${{ github.ref_name }}
+          if-no-files-found: error
+          path: |
+            akt-*/build/libs/*.jar
+            akt-*/build/dokka/html/**
+            example/build/distributions/*
+            build/pages/**
+
+      - name: publish maven repository to github pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./build/pages
+          keep_files: true

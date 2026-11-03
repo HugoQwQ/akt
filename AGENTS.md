@@ -32,6 +32,8 @@ that integration.
 - use vulkan through the system vulkan loader. ship checked-in spir-v shaders so
   players do not need a shader compiler.
 - use the gradle wrapper.
+- use ktfmt with kotlin language style, a 100-column limit, and unused import
+  removal. run the formatting checks before handing off changes.
 
 ## verification
 
@@ -39,6 +41,8 @@ run these before handing off changes:
 
 ```powershell
 .\gradlew.bat build
+.\gradlew.bat ktfmtCheck ktfmtCheckScripts
+.\gradlew.bat -p buildSrc ktfmtCheck ktfmtCheckScripts
 .\gradlew.bat :example:run
 ```
 

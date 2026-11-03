@@ -1,6 +1,4 @@
-plugins {
-    id("buildsrc.convention.desktop")
-}
+plugins { id("buildsrc.convention.desktop") }
 
 dependencies {
     api(project(":akt-core"))
