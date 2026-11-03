@@ -13,6 +13,14 @@ import io.hugouwu.akt.ui.PanelItem
 import io.hugouwu.akt.ui.TextItem
 import io.hugouwu.akt.ui.UiItem
 import io.hugouwu.akt.ui.UiScene
+import java.awt.image.BufferedImage
+import java.nio.ByteBuffer
+import java.nio.file.Files
+import java.nio.file.Path
+import javax.imageio.ImageIO
+import kotlin.math.cos
+import kotlin.math.min
+import kotlin.math.sin
 import org.lwjgl.glfw.GLFW.GLFW_CLIENT_API
 import org.lwjgl.glfw.GLFW.GLFW_KEY_1
 import org.lwjgl.glfw.GLFW.GLFW_KEY_2
@@ -142,8 +150,8 @@ import org.lwjgl.vulkan.VK10.VK_SHARING_MODE_EXCLUSIVE
 import org.lwjgl.vulkan.VK10.VK_SUBPASS_EXTERNAL
 import org.lwjgl.vulkan.VK10.VK_SUCCESS
 import org.lwjgl.vulkan.VK10.VK_VERTEX_INPUT_RATE_VERTEX
-import org.lwjgl.vulkan.VK10.vkAllocateDescriptorSets
 import org.lwjgl.vulkan.VK10.vkAllocateCommandBuffers
+import org.lwjgl.vulkan.VK10.vkAllocateDescriptorSets
 import org.lwjgl.vulkan.VK10.vkAllocateMemory
 import org.lwjgl.vulkan.VK10.vkBeginCommandBuffer
 import org.lwjgl.vulkan.VK10.vkBindBufferMemory
@@ -198,9 +206,9 @@ import org.lwjgl.vulkan.VK10.vkEnumerateDeviceExtensionProperties
 import org.lwjgl.vulkan.VK10.vkEnumerateInstanceExtensionProperties
 import org.lwjgl.vulkan.VK10.vkEnumeratePhysicalDevices
 import org.lwjgl.vulkan.VK10.vkFreeMemory
+import org.lwjgl.vulkan.VK10.vkGetBufferMemoryRequirements
 import org.lwjgl.vulkan.VK10.vkGetDeviceQueue
 import org.lwjgl.vulkan.VK10.vkGetImageMemoryRequirements
-import org.lwjgl.vulkan.VK10.vkGetBufferMemoryRequirements
 import org.lwjgl.vulkan.VK10.vkGetPhysicalDeviceFeatures
 import org.lwjgl.vulkan.VK10.vkGetPhysicalDeviceFormatProperties
 import org.lwjgl.vulkan.VK10.vkGetPhysicalDeviceMemoryProperties
@@ -227,9 +235,9 @@ import org.lwjgl.vulkan.VkCommandPoolCreateInfo
 import org.lwjgl.vulkan.VkDescriptorImageInfo
 import org.lwjgl.vulkan.VkDescriptorPoolCreateInfo
 import org.lwjgl.vulkan.VkDescriptorPoolSize
+import org.lwjgl.vulkan.VkDescriptorSetAllocateInfo
 import org.lwjgl.vulkan.VkDescriptorSetLayoutBinding
 import org.lwjgl.vulkan.VkDescriptorSetLayoutCreateInfo
-import org.lwjgl.vulkan.VkDescriptorSetAllocateInfo
 import org.lwjgl.vulkan.VkDevice
 import org.lwjgl.vulkan.VkDeviceCreateInfo
 import org.lwjgl.vulkan.VkDeviceQueueCreateInfo
@@ -279,15 +287,18 @@ import org.lwjgl.vulkan.VkVertexInputAttributeDescription
 import org.lwjgl.vulkan.VkVertexInputBindingDescription
 import org.lwjgl.vulkan.VkViewport
 import org.lwjgl.vulkan.VkWriteDescriptorSet
-import java.awt.image.BufferedImage
-import java.nio.ByteBuffer
-import java.nio.file.Files
-import java.nio.file.Path
-import javax.imageio.ImageIO
-import kotlin.math.cos
-import kotlin.math.min
-import kotlin.math.sin
 
+/**
+ * default lwjgl vulkan desktop renderer.
+ *
+ * the renderer owns the glfw window, vulkan device, swapchain, graphics pipeline, textures, and
+ * frame synchronization. use [RendererFactory] to inject another backend instead of constructing
+ * this class directly.
+ *
+ * @param config window and presentation settings.
+ * @param assets source used to resolve image items.
+ * @throws IllegalStateException when glfw, vulkan, or the graphics device cannot be initialized.
+ */
 public class VulkanRenderer(
     private val config: WindowConfig = WindowConfig(),
     private val assets: AssetStore = AssetStore.empty,
@@ -423,31 +434,35 @@ public class VulkanRenderer(
         glfwShowWindow(window)
     }
 
+    /** returns true when the window or renderer has closed. */
     override fun shouldClose(): Boolean = closed || glfwWindowShouldClose(window)
 
+    /** polls edge-triggered keyboard and pointer input. */
     override fun pollInput(): InputFrame {
         if (shouldClose()) return InputFrame(closeRequested = true)
         glfwPollEvents()
 
-        val advanceKeys = listOf(
-            glfwGetKey(window, GLFW_KEY_ENTER) == GLFW_PRESS,
-            glfwGetKey(window, GLFW_KEY_KP_ENTER) == GLFW_PRESS,
-            glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS,
-        )
+        val advanceKeys =
+            listOf(
+                glfwGetKey(window, GLFW_KEY_ENTER) == GLFW_PRESS,
+                glfwGetKey(window, GLFW_KEY_KP_ENTER) == GLFW_PRESS,
+                glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS,
+            )
         val advance = advanceKeys.any { it } && !previousAdvance
         previousAdvance = advanceKeys.any { it }
 
-        val choiceKeys = listOf(
-            glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS,
-            glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS,
-            glfwGetKey(window, GLFW_KEY_3) == GLFW_PRESS,
-            glfwGetKey(window, GLFW_KEY_4) == GLFW_PRESS,
-        )
-        val choiceIndex = choiceKeys.withIndex()
-            .firstOrNull { (index, pressed) ->
-                pressed && !previousChoiceKeys[index]
-            }
-            ?.index
+        val choiceKeys =
+            listOf(
+                glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS,
+                glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS,
+                glfwGetKey(window, GLFW_KEY_3) == GLFW_PRESS,
+                glfwGetKey(window, GLFW_KEY_4) == GLFW_PRESS,
+            )
+        val choiceIndex =
+            choiceKeys
+                .withIndex()
+                .firstOrNull { (index, pressed) -> pressed && !previousChoiceKeys[index] }
+                ?.index
         previousChoiceKeys = choiceKeys
 
         val closeRequested = glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS
@@ -464,6 +479,7 @@ public class VulkanRenderer(
         )
     }
 
+    /** builds draw batches and presents one vulkan frame. */
     override fun render(scene: UiScene) {
         if (closed || scene.width <= 0f || scene.height <= 0f) return
         sceneWidth = scene.width
@@ -485,27 +501,29 @@ public class VulkanRenderer(
         val batches = buildBatches(scene)
         val capturePath = pendingCapture
 
-        val acquire = stackPush().use { acquireStack ->
-            checkVk(
-                vkWaitForFences(
-                    device,
-                    acquireStack.longs(inFlightFence),
-                    true,
-                    Long.MAX_VALUE,
-                ),
-                "failed to wait for the vulkan frame fence",
-            )
-            val imageIndexBuffer = acquireStack.mallocInt(1)
-            val result = vkAcquireNextImageKHR(
-                device,
-                swapchain,
-                Long.MAX_VALUE,
-                imageAvailableSemaphore,
-                VK_NULL_HANDLE,
-                imageIndexBuffer,
-            )
-            result to imageIndexBuffer.get(0)
-        }
+        val acquire =
+            stackPush().use { acquireStack ->
+                checkVk(
+                    vkWaitForFences(
+                        device,
+                        acquireStack.longs(inFlightFence),
+                        true,
+                        Long.MAX_VALUE,
+                    ),
+                    "failed to wait for the vulkan frame fence",
+                )
+                val imageIndexBuffer = acquireStack.mallocInt(1)
+                val result =
+                    vkAcquireNextImageKHR(
+                        device,
+                        swapchain,
+                        Long.MAX_VALUE,
+                        imageAvailableSemaphore,
+                        VK_NULL_HANDLE,
+                        imageIndexBuffer,
+                    )
+                result to imageIndexBuffer.get(0)
+            }
         val acquireResult = acquire.first
         val imageIndex = acquire.second
         if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR) {
@@ -516,15 +534,14 @@ public class VulkanRenderer(
             error("failed to acquire a vulkan swapchain image (vkresult=$acquireResult)")
         }
 
-        stackPush().use { fenceStack ->
-            vkResetFences(device, fenceStack.longs(inFlightFence))
-        }
+        stackPush().use { fenceStack -> vkResetFences(device, fenceStack.longs(inFlightFence)) }
         vkResetCommandBuffer(commandBuffer, 0)
-        val captureBuffer = if (capturePath != null) {
-            createReadbackBuffer(swapchainExtentWidth, swapchainExtentHeight)
-        } else {
-            null
-        }
+        val captureBuffer =
+            if (capturePath != null) {
+                createReadbackBuffer(swapchainExtentWidth, swapchainExtentHeight)
+            } else {
+                null
+            }
         recordFrame(scene, batches, imageIndex, captureBuffer)
         submitFrame(imageIndex)
 
@@ -548,8 +565,8 @@ public class VulkanRenderer(
         val presentResult = present(imageIndex)
         if (
             presentResult == VK_ERROR_OUT_OF_DATE_KHR ||
-            presentResult == VK_SUBOPTIMAL_KHR ||
-            acquireResult == VK_SUBOPTIMAL_KHR
+                presentResult == VK_SUBOPTIMAL_KHR ||
+                acquireResult == VK_SUBOPTIMAL_KHR
         ) {
             recreateSwapchain()
         } else {
@@ -557,19 +574,20 @@ public class VulkanRenderer(
         }
     }
 
+    /** requests a png capture of the next successfully rendered frame. */
     override fun requestCapture(path: Path) {
         pendingCapture = path.toAbsolutePath().normalize()
     }
 
+    /** returns the glfw monotonic clock in seconds. */
     override fun elapsedSeconds(): Double = glfwGetTime()
 
+    /** waits for the device and releases all renderer resources. */
     override fun close() {
         if (closed) return
         vkDeviceWaitIdle(device)
 
-        textures.values.forEach { texture ->
-            texture?.let(::destroyTexture)
-        }
+        textures.values.forEach { texture -> texture?.let(::destroyTexture) }
         textures.clear()
         whiteTexture?.let(::destroyTexture)
         fontTexture?.let(::destroyTexture)
@@ -601,60 +619,62 @@ public class VulkanRenderer(
         closed = true
     }
 
-    private fun createInstance(): VkInstance = stackPush().use { stack ->
-        val required = glfwGetRequiredInstanceExtensions()
-            ?: error("glfw could not provide vulkan instance extensions")
-        val extensionNames = mutableListOf<String>()
-        for (index in 0 until required.remaining()) {
-            extensionNames += memUTF8(required.get(index))
-        }
-        val available = enumerateInstanceExtensions()
-        val portability = isMac() &&
-            VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME in available
-        if (portability) {
-            extensionNames += VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME
-        }
+    private fun createInstance(): VkInstance =
+        stackPush().use { stack ->
+            val required =
+                glfwGetRequiredInstanceExtensions()
+                    ?: error("glfw could not provide vulkan instance extensions")
+            val extensionNames = mutableListOf<String>()
+            for (index in 0 until required.remaining()) {
+                extensionNames += memUTF8(required.get(index))
+            }
+            val available = enumerateInstanceExtensions()
+            val portability = isMac() && VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME in available
+            if (portability) {
+                extensionNames += VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME
+            }
 
-        val extensions = stack.mallocPointer(extensionNames.size)
-        extensionNames.forEach { name ->
-            extensions.put(stack.UTF8(name))
-        }
-        extensions.flip()
+            val extensions = stack.mallocPointer(extensionNames.size)
+            extensionNames.forEach { name -> extensions.put(stack.UTF8(name)) }
+            extensions.flip()
 
-        val applicationInfo = VkApplicationInfo.calloc(stack)
-            .`sType$Default`()
-            .pApplicationName(stack.UTF8("akt"))
-            .applicationVersion(1)
-            .pEngineName(stack.UTF8("akt"))
-            .engineVersion(1)
-            .apiVersion(VK_API_VERSION_1_0)
-        val createInfo = VkInstanceCreateInfo.calloc(stack)
-            .`sType$Default`()
-            .flags(
-                if (portability) {
-                    VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR
-                } else {
-                    0
-                },
+            val applicationInfo =
+                VkApplicationInfo.calloc(stack)
+                    .`sType$Default`()
+                    .pApplicationName(stack.UTF8("akt"))
+                    .applicationVersion(1)
+                    .pEngineName(stack.UTF8("akt"))
+                    .engineVersion(1)
+                    .apiVersion(VK_API_VERSION_1_0)
+            val createInfo =
+                VkInstanceCreateInfo.calloc(stack)
+                    .`sType$Default`()
+                    .flags(
+                        if (portability) {
+                            VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR
+                        } else {
+                            0
+                        }
+                    )
+                    .pApplicationInfo(applicationInfo)
+                    .ppEnabledExtensionNames(extensions)
+            val instanceHandle = stack.mallocPointer(1)
+            checkVk(
+                vkCreateInstance(createInfo, null, instanceHandle),
+                "failed to create the vulkan instance",
             )
-            .pApplicationInfo(applicationInfo)
-            .ppEnabledExtensionNames(extensions)
-        val instanceHandle = stack.mallocPointer(1)
-        checkVk(
-            vkCreateInstance(createInfo, null, instanceHandle),
-            "failed to create the vulkan instance",
-        )
-        VkInstance(instanceHandle.get(0), createInfo)
-    }
+            VkInstance(instanceHandle.get(0), createInfo)
+        }
 
-    private fun createSurface(instance: VkInstance, window: Long): Long = stackPush().use { stack ->
-        val surfaceHandle = stack.mallocLong(1)
-        checkVk(
-            glfwCreateWindowSurface(instance, window, null, surfaceHandle),
-            "failed to create the vulkan surface",
-        )
-        surfaceHandle.get(0)
-    }
+    private fun createSurface(instance: VkInstance, window: Long): Long =
+        stackPush().use { stack ->
+            val surfaceHandle = stack.mallocLong(1)
+            checkVk(
+                glfwCreateWindowSurface(instance, window, null, surfaceHandle),
+                "failed to create the vulkan surface",
+            )
+            surfaceHandle.get(0)
+        }
 
     private fun choosePhysicalDevice(instance: VkInstance): VkPhysicalDevice =
         stackPush().use { stack ->
@@ -670,9 +690,10 @@ public class VulkanRenderer(
                 "failed to read vulkan devices",
             )
 
-            val candidates = (0 until count.get(0))
-                .map { VkPhysicalDevice(devices.get(it), instance) }
-                .filter(::isDeviceSuitable)
+            val candidates =
+                (0 until count.get(0))
+                    .map { VkPhysicalDevice(devices.get(it), instance) }
+                    .filter(::isDeviceSuitable)
             check(candidates.isNotEmpty()) { "no vulkan device supports presentation" }
 
             candidates.maxByOrNull { candidate ->
@@ -689,111 +710,116 @@ public class VulkanRenderer(
     private fun createLogicalDevice(
         physicalDevice: VkPhysicalDevice,
         queueFamilies: QueueFamilies,
-    ): VkDevice = stackPush().use { stack ->
-        val uniqueFamilies = queueFamilies.run { listOf(graphics, present).distinct() }
-        val priorities = stack.floats(1f)
-        val queueCreateInfos = VkDeviceQueueCreateInfo.calloc(uniqueFamilies.size, stack)
-        uniqueFamilies.forEachIndexed { index, family ->
-            queueCreateInfos[index]
-                .`sType$Default`()
-                .queueFamilyIndex(family)
-                .pQueuePriorities(priorities)
+    ): VkDevice =
+        stackPush().use { stack ->
+            val uniqueFamilies = queueFamilies.run { listOf(graphics, present).distinct() }
+            val priorities = stack.floats(1f)
+            val queueCreateInfos = VkDeviceQueueCreateInfo.calloc(uniqueFamilies.size, stack)
+            uniqueFamilies.forEachIndexed { index, family ->
+                queueCreateInfos[index]
+                    .`sType$Default`()
+                    .queueFamilyIndex(family)
+                    .pQueuePriorities(priorities)
+            }
+
+            val availableExtensions = enumerateDeviceExtensions(physicalDevice)
+            val extensionNames = mutableListOf(VK_KHR_SWAPCHAIN_EXTENSION_NAME)
+            if (isMac() && VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME in availableExtensions) {
+                extensionNames += VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME
+            }
+            val extensions = stack.mallocPointer(extensionNames.size)
+            extensionNames.forEach { name -> extensions.put(stack.UTF8(name)) }
+            extensions.flip()
+
+            val features = VkPhysicalDeviceFeatures.calloc(stack)
+            vkGetPhysicalDeviceFeatures(physicalDevice, features)
+
+            val createInfo =
+                VkDeviceCreateInfo.calloc(stack)
+                    .`sType$Default`()
+                    .pQueueCreateInfos(queueCreateInfos)
+                    .ppEnabledExtensionNames(extensions)
+                    .pEnabledFeatures(features)
+            val deviceHandle = stack.mallocPointer(1)
+            checkVk(
+                vkCreateDevice(physicalDevice, createInfo, null, deviceHandle),
+                "failed to create the vulkan device",
+            )
+            VkDevice(deviceHandle.get(0), physicalDevice, createInfo)
         }
 
-        val availableExtensions = enumerateDeviceExtensions(physicalDevice)
-        val extensionNames = mutableListOf(VK_KHR_SWAPCHAIN_EXTENSION_NAME)
-        if (
-            isMac() &&
-            VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME in availableExtensions
-        ) {
-            extensionNames += VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME
+    private fun createSampler(device: VkDevice): Long =
+        stackPush().use { stack ->
+            val createInfo =
+                VkSamplerCreateInfo.calloc(stack)
+                    .`sType$Default`()
+                    .magFilter(VK_FILTER_LINEAR)
+                    .minFilter(VK_FILTER_LINEAR)
+                    .mipmapMode(VK_SAMPLER_MIPMAP_MODE_LINEAR)
+                    .addressModeU(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
+                    .addressModeV(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
+                    .addressModeW(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
+                    .anisotropyEnable(false)
+                    .compareEnable(false)
+                    .borderColor(VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK)
+                    .unnormalizedCoordinates(false)
+            val samplerHandle = stack.mallocLong(1)
+            checkVk(
+                vkCreateSampler(device, createInfo, null, samplerHandle),
+                "failed to create the vulkan sampler",
+            )
+            samplerHandle.get(0)
         }
-        val extensions = stack.mallocPointer(extensionNames.size)
-        extensionNames.forEach { name ->
-            extensions.put(stack.UTF8(name))
+
+    private fun createDescriptorSetLayout(device: VkDevice): Long =
+        stackPush().use { stack ->
+            val binding =
+                VkDescriptorSetLayoutBinding.calloc(1, stack)
+                    .binding(0)
+                    .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                    .descriptorCount(1)
+                    .stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT)
+            val createInfo =
+                VkDescriptorSetLayoutCreateInfo.calloc(stack).`sType$Default`().pBindings(binding)
+            val layout = stack.mallocLong(1)
+            checkVk(
+                vkCreateDescriptorSetLayout(device, createInfo, null, layout),
+                "failed to create descriptor set layout",
+            )
+            layout.get(0)
         }
-        extensions.flip()
 
-        val features = VkPhysicalDeviceFeatures.calloc(stack)
-        vkGetPhysicalDeviceFeatures(physicalDevice, features)
-
-        val createInfo = VkDeviceCreateInfo.calloc(stack)
-            .`sType$Default`()
-            .pQueueCreateInfos(queueCreateInfos)
-            .ppEnabledExtensionNames(extensions)
-            .pEnabledFeatures(features)
-        val deviceHandle = stack.mallocPointer(1)
-        checkVk(
-            vkCreateDevice(physicalDevice, createInfo, null, deviceHandle),
-            "failed to create the vulkan device",
-        )
-        VkDevice(deviceHandle.get(0), physicalDevice, createInfo)
-    }
-
-    private fun createSampler(device: VkDevice): Long = stackPush().use { stack ->
-        val createInfo = VkSamplerCreateInfo.calloc(stack)
-            .`sType$Default`()
-            .magFilter(VK_FILTER_LINEAR)
-            .minFilter(VK_FILTER_LINEAR)
-            .mipmapMode(VK_SAMPLER_MIPMAP_MODE_LINEAR)
-            .addressModeU(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
-            .addressModeV(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
-            .addressModeW(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
-            .anisotropyEnable(false)
-            .compareEnable(false)
-            .borderColor(VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK)
-            .unnormalizedCoordinates(false)
-        val samplerHandle = stack.mallocLong(1)
-        checkVk(
-            vkCreateSampler(device, createInfo, null, samplerHandle),
-            "failed to create the vulkan sampler",
-        )
-        samplerHandle.get(0)
-    }
-
-    private fun createDescriptorSetLayout(device: VkDevice): Long = stackPush().use { stack ->
-        val binding = VkDescriptorSetLayoutBinding.calloc(1, stack)
-            .binding(0)
-            .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-            .descriptorCount(1)
-            .stageFlags(VK_SHADER_STAGE_FRAGMENT_BIT)
-        val createInfo = VkDescriptorSetLayoutCreateInfo.calloc(stack)
-            .`sType$Default`()
-            .pBindings(binding)
-        val layout = stack.mallocLong(1)
-        checkVk(
-            vkCreateDescriptorSetLayout(device, createInfo, null, layout),
-            "failed to create descriptor set layout",
-        )
-        layout.get(0)
-    }
-
-    private fun createDescriptorPool(device: VkDevice): Long = stackPush().use { stack ->
-        val poolSize = VkDescriptorPoolSize.calloc(1, stack)
-            .type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-            .descriptorCount(128)
-        val createInfo = VkDescriptorPoolCreateInfo.calloc(stack)
-            .`sType$Default`()
-            .maxSets(128)
-            .pPoolSizes(poolSize)
-        val pool = stack.mallocLong(1)
-        checkVk(
-            vkCreateDescriptorPool(device, createInfo, null, pool),
-            "failed to create descriptor pool",
-        )
-        pool.get(0)
-    }
+    private fun createDescriptorPool(device: VkDevice): Long =
+        stackPush().use { stack ->
+            val poolSize =
+                VkDescriptorPoolSize.calloc(1, stack)
+                    .type(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                    .descriptorCount(128)
+            val createInfo =
+                VkDescriptorPoolCreateInfo.calloc(stack)
+                    .`sType$Default`()
+                    .maxSets(128)
+                    .pPoolSizes(poolSize)
+            val pool = stack.mallocLong(1)
+            checkVk(
+                vkCreateDescriptorPool(device, createInfo, null, pool),
+                "failed to create descriptor pool",
+            )
+            pool.get(0)
+        }
 
     private fun createPipelineLayout(device: VkDevice, setLayout: Long): Long =
         stackPush().use { stack ->
-            val pushRange = VkPushConstantRange.calloc(1, stack)
-                .stageFlags(VK_SHADER_STAGE_VERTEX_BIT)
-                .offset(0)
-                .size(8)
-            val createInfo = VkPipelineLayoutCreateInfo.calloc(stack)
-                .`sType$Default`()
-                .pSetLayouts(stack.longs(setLayout))
-                .pPushConstantRanges(pushRange)
+            val pushRange =
+                VkPushConstantRange.calloc(1, stack)
+                    .stageFlags(VK_SHADER_STAGE_VERTEX_BIT)
+                    .offset(0)
+                    .size(8)
+            val createInfo =
+                VkPipelineLayoutCreateInfo.calloc(stack)
+                    .`sType$Default`()
+                    .pSetLayouts(stack.longs(setLayout))
+                    .pPushConstantRanges(pushRange)
             val layout = stack.mallocLong(1)
             checkVk(
                 vkCreatePipelineLayout(device, createInfo, null, layout),
@@ -804,10 +830,11 @@ public class VulkanRenderer(
 
     private fun createCommandPool(device: VkDevice, graphicsFamily: Int): Long =
         stackPush().use { stack ->
-            val createInfo = VkCommandPoolCreateInfo.calloc(stack)
-                .`sType$Default`()
-                .flags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT)
-                .queueFamilyIndex(graphicsFamily)
+            val createInfo =
+                VkCommandPoolCreateInfo.calloc(stack)
+                    .`sType$Default`()
+                    .flags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT)
+                    .queueFamilyIndex(graphicsFamily)
             val pool = stack.mallocLong(1)
             checkVk(
                 vkCreateCommandPool(device, createInfo, null, pool),
@@ -819,26 +846,29 @@ public class VulkanRenderer(
     private fun allocateCommandBuffer(
         device: VkDevice,
         commandPool: Long,
-    ): VkCommandBuffer = stackPush().use { stack ->
-        val allocateInfo = VkCommandBufferAllocateInfo.calloc(stack)
-            .`sType$Default`()
-            .commandPool(commandPool)
-            .level(VK_COMMAND_BUFFER_LEVEL_PRIMARY)
-            .commandBufferCount(1)
-        val commandBuffers = stack.mallocPointer(1)
-        checkVk(
-            vkAllocateCommandBuffers(device, allocateInfo, commandBuffers),
-            "failed to allocate command buffer",
-        )
-        VkCommandBuffer(commandBuffers.get(0), device)
-    }
+    ): VkCommandBuffer =
+        stackPush().use { stack ->
+            val allocateInfo =
+                VkCommandBufferAllocateInfo.calloc(stack)
+                    .`sType$Default`()
+                    .commandPool(commandPool)
+                    .level(VK_COMMAND_BUFFER_LEVEL_PRIMARY)
+                    .commandBufferCount(1)
+            val commandBuffers = stack.mallocPointer(1)
+            checkVk(
+                vkAllocateCommandBuffers(device, allocateInfo, commandBuffers),
+                "failed to allocate command buffer",
+            )
+            VkCommandBuffer(commandBuffers.get(0), device)
+        }
 
     private fun createSyncObjects(device: VkDevice): Pair<Long, Long> =
         stackPush().use { stack ->
             val semaphoreInfo = VkSemaphoreCreateInfo.calloc(stack).`sType$Default`()
-            val fenceInfo = VkFenceCreateInfo.calloc(stack)
-                .`sType$Default`()
-                .flags(VK_FENCE_CREATE_SIGNALED_BIT)
+            val fenceInfo =
+                VkFenceCreateInfo.calloc(stack)
+                    .`sType$Default`()
+                    .flags(VK_FENCE_CREATE_SIGNALED_BIT)
             val imageAvailable = stack.mallocLong(1)
             val fence = stack.mallocLong(1)
             checkVk(
@@ -852,428 +882,443 @@ public class VulkanRenderer(
             imageAvailable.get(0) to fence.get(0)
         }
 
-    private fun createSwapchain() = stackPush().use { stack ->
-        val support = querySwapchainSupport(physicalDevice)
-        val format = chooseSurfaceFormat(support.formats)
-        val presentMode = choosePresentMode(support.presentModes)
-        val extent = chooseExtent(support, stack)
-        var imageCount = support.minImageCount + 1
-        if (
-            support.maxImageCount > 0 &&
-            imageCount > support.maxImageCount
-        ) {
-            imageCount = support.maxImageCount
-        }
-        val usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT or VK_IMAGE_USAGE_TRANSFER_SRC_BIT
-        require(
-            support.supportedUsageFlags and usage == usage,
-        ) {
-            "vulkan swapchain does not support transfer readback"
-        }
+    private fun createSwapchain() =
+        stackPush().use { stack ->
+            val support = querySwapchainSupport(physicalDevice)
+            val format = chooseSurfaceFormat(support.formats)
+            val presentMode = choosePresentMode(support.presentModes)
+            val extent = chooseExtent(support, stack)
+            var imageCount = support.minImageCount + 1
+            if (support.maxImageCount > 0 && imageCount > support.maxImageCount) {
+                imageCount = support.maxImageCount
+            }
+            val usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT or VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+            require(support.supportedUsageFlags and usage == usage) {
+                "vulkan swapchain does not support transfer readback"
+            }
 
-        val compositeAlpha = chooseCompositeAlpha(support)
-        val createInfo = VkSwapchainCreateInfoKHR.calloc(stack)
-            .`sType$Default`()
-            .surface(surface)
-            .minImageCount(imageCount)
-            .imageFormat(format.format)
-            .imageColorSpace(format.colorSpace)
-            .imageExtent(extent)
-            .imageArrayLayers(1)
-            .imageUsage(usage)
-            .imageSharingMode(VK_SHARING_MODE_EXCLUSIVE)
-            .preTransform(chooseSurfaceTransform(support))
-            .compositeAlpha(compositeAlpha)
-            .presentMode(presentMode)
-            .clipped(true)
-            .oldSwapchain(VK_NULL_HANDLE)
+            val compositeAlpha = chooseCompositeAlpha(support)
+            val createInfo =
+                VkSwapchainCreateInfoKHR.calloc(stack)
+                    .`sType$Default`()
+                    .surface(surface)
+                    .minImageCount(imageCount)
+                    .imageFormat(format.format)
+                    .imageColorSpace(format.colorSpace)
+                    .imageExtent(extent)
+                    .imageArrayLayers(1)
+                    .imageUsage(usage)
+                    .imageSharingMode(VK_SHARING_MODE_EXCLUSIVE)
+                    .preTransform(chooseSurfaceTransform(support))
+                    .compositeAlpha(compositeAlpha)
+                    .presentMode(presentMode)
+                    .clipped(true)
+                    .oldSwapchain(VK_NULL_HANDLE)
 
-        val swapchainHandle = stack.mallocLong(1)
-        checkVk(
-            vkCreateSwapchainKHR(device, createInfo, null, swapchainHandle),
-            "failed to create vulkan swapchain",
-        )
-        swapchain = swapchainHandle.get(0)
-        swapchainFormat = format.format
-        swapchainExtentWidth = extent.width()
-        swapchainExtentHeight = extent.height()
-
-        val imageCountBuffer = stack.mallocInt(1)
-        checkVk(
-            vkGetSwapchainImagesKHR(device, swapchain, imageCountBuffer, null),
-            "failed to count swapchain images",
-        )
-        val images = stack.mallocLong(imageCountBuffer.get(0))
-        checkVk(
-            vkGetSwapchainImagesKHR(device, swapchain, imageCountBuffer, images),
-            "failed to read swapchain images",
-        )
-        swapchainImages = List(imageCountBuffer.get(0)) { images.get(it) }
-        renderFinishedSemaphores = swapchainImages.mapTo(mutableListOf()) {
-            createSemaphore()
-        }
-
-        swapchainImageViews = swapchainImages.mapTo(mutableListOf()) { image ->
-            createImageView(device, image, swapchainFormat)
-        }
-    }
-
-    private fun createRenderPass() = stackPush().use { stack ->
-        val colorAttachment = VkAttachmentDescription.calloc(1, stack)
-            .format(swapchainFormat)
-            .samples(VK_SAMPLE_COUNT_1_BIT)
-            .loadOp(VK_ATTACHMENT_LOAD_OP_CLEAR)
-            .storeOp(VK_ATTACHMENT_STORE_OP_STORE)
-            .stencilLoadOp(VK_ATTACHMENT_LOAD_OP_DONT_CARE)
-            .stencilStoreOp(VK_ATTACHMENT_STORE_OP_DONT_CARE)
-            .initialLayout(VK_IMAGE_LAYOUT_UNDEFINED)
-            .finalLayout(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
-        val colorReference = VkAttachmentReference.calloc(1, stack)
-            .attachment(0)
-            .layout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
-        val subpass = VkSubpassDescription.calloc(1, stack)
-            .pipelineBindPoint(VK_PIPELINE_BIND_POINT_GRAPHICS)
-            .colorAttachmentCount(1)
-            .pColorAttachments(colorReference)
-        val dependency = VkSubpassDependency.calloc(1, stack)
-            .srcSubpass(VK_SUBPASS_EXTERNAL)
-            .dstSubpass(0)
-            .srcStageMask(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
-            .dstStageMask(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
-            .srcAccessMask(0)
-            .dstAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)
-        val createInfo = VkRenderPassCreateInfo.calloc(stack)
-            .`sType$Default`()
-            .pAttachments(colorAttachment)
-            .pSubpasses(subpass)
-            .pDependencies(dependency)
-        val renderPassHandle = stack.mallocLong(1)
-        checkVk(
-            vkCreateRenderPass(device, createInfo, null, renderPassHandle),
-            "failed to create render pass",
-        )
-        renderPass = renderPassHandle.get(0)
-    }
-
-    private fun createGraphicsPipeline() = stackPush().use { stack ->
-        val vertexShader = loadShader("ui.vert.spv")
-        val fragmentShader = loadShader("ui.frag.spv")
-        val vertexModule = createShaderModule(device, vertexShader)
-        val fragmentModule = createShaderModule(device, fragmentShader)
-        try {
-            val stages = VkPipelineShaderStageCreateInfo.calloc(2, stack)
-            stages[0]
-                .`sType$Default`()
-                .stage(VK_SHADER_STAGE_VERTEX_BIT)
-                .module(vertexModule)
-                .pName(stack.UTF8("main"))
-            stages[1]
-                .`sType$Default`()
-                .stage(VK_SHADER_STAGE_FRAGMENT_BIT)
-                .module(fragmentModule)
-                .pName(stack.UTF8("main"))
-
-            val binding = VkVertexInputBindingDescription.calloc(1, stack)
-                .binding(0)
-                .stride(32)
-                .inputRate(VK_VERTEX_INPUT_RATE_VERTEX)
-            val attributes = VkVertexInputAttributeDescription.calloc(3, stack)
-            attributes[0]
-                .location(0)
-                .binding(0)
-                .format(VK_FORMAT_R32G32_SFLOAT)
-                .offset(0)
-            attributes[1]
-                .location(1)
-                .binding(0)
-                .format(VK_FORMAT_R32G32_SFLOAT)
-                .offset(8)
-            attributes[2]
-                .location(2)
-                .binding(0)
-                .format(VK_FORMAT_R32G32B32A32_SFLOAT)
-                .offset(16)
-            val vertexInput = VkPipelineVertexInputStateCreateInfo.calloc(stack)
-                .`sType$Default`()
-                .pVertexBindingDescriptions(binding)
-                .pVertexAttributeDescriptions(attributes)
-
-            val inputAssembly = VkPipelineInputAssemblyStateCreateInfo.calloc(stack)
-                .`sType$Default`()
-                .topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
-                .primitiveRestartEnable(false)
-            val viewportState = VkPipelineViewportStateCreateInfo.calloc(stack)
-                .`sType$Default`()
-                .viewportCount(1)
-                .scissorCount(1)
-            val rasterization = VkPipelineRasterizationStateCreateInfo.calloc(stack)
-                .`sType$Default`()
-                .depthClampEnable(false)
-                .rasterizerDiscardEnable(false)
-                .polygonMode(VK_POLYGON_MODE_FILL)
-                .cullMode(VK_CULL_MODE_NONE)
-                .frontFace(VK_FRONT_FACE_COUNTER_CLOCKWISE)
-                .depthBiasEnable(false)
-                .lineWidth(1f)
-            val multisample = VkPipelineMultisampleStateCreateInfo.calloc(stack)
-                .`sType$Default`()
-                .rasterizationSamples(VK_SAMPLE_COUNT_1_BIT)
-                .sampleShadingEnable(false)
-            val blendAttachment = VkPipelineColorBlendAttachmentState.calloc(1, stack)
-                .blendEnable(true)
-                .srcColorBlendFactor(VK_BLEND_FACTOR_SRC_ALPHA)
-                .dstColorBlendFactor(VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA)
-                .colorBlendOp(VK_BLEND_OP_ADD)
-                .srcAlphaBlendFactor(VK_BLEND_FACTOR_ONE)
-                .dstAlphaBlendFactor(VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA)
-                .alphaBlendOp(VK_BLEND_OP_ADD)
-                .colorWriteMask(
-                    VK_COLOR_COMPONENT_R_BIT or
-                        VK_COLOR_COMPONENT_G_BIT or
-                        VK_COLOR_COMPONENT_B_BIT or
-                        VK_COLOR_COMPONENT_A_BIT,
-                )
-            val colorBlend = VkPipelineColorBlendStateCreateInfo.calloc(stack)
-                .`sType$Default`()
-                .logicOpEnable(false)
-                .pAttachments(blendAttachment)
-            val dynamicStates = stack.mallocInt(2)
-                .put(0, VK_DYNAMIC_STATE_VIEWPORT)
-                .put(1, VK_DYNAMIC_STATE_SCISSOR)
-            val dynamicState = VkPipelineDynamicStateCreateInfo.calloc(stack)
-                .`sType$Default`()
-                .pDynamicStates(dynamicStates)
-            val pipelineInfo = VkGraphicsPipelineCreateInfo.calloc(1, stack)
-            pipelineInfo[0]
-                .`sType$Default`()
-                .pStages(stages)
-                .pVertexInputState(vertexInput)
-                .pInputAssemblyState(inputAssembly)
-                .pViewportState(viewportState)
-                .pRasterizationState(rasterization)
-                .pMultisampleState(multisample)
-                .pColorBlendState(colorBlend)
-                .pDynamicState(dynamicState)
-                .layout(pipelineLayout)
-                .renderPass(renderPass)
-                .subpass(0)
-                .basePipelineHandle(VK_NULL_HANDLE)
-                .basePipelineIndex(-1)
-            val pipelineHandle = stack.mallocLong(1)
+            val swapchainHandle = stack.mallocLong(1)
             checkVk(
-                vkCreateGraphicsPipelines(
-                    device,
-                    VK_NULL_HANDLE,
-                    pipelineInfo,
-                    null,
-                    pipelineHandle,
-                ),
-                "failed to create graphics pipeline",
+                vkCreateSwapchainKHR(device, createInfo, null, swapchainHandle),
+                "failed to create vulkan swapchain",
             )
-            graphicsPipeline = pipelineHandle.get(0)
-        } finally {
-            vkDestroyShaderModule(device, vertexModule, null)
-            vkDestroyShaderModule(device, fragmentModule, null)
-            memFree(vertexShader)
-            memFree(fragmentShader)
+            swapchain = swapchainHandle.get(0)
+            swapchainFormat = format.format
+            swapchainExtentWidth = extent.width()
+            swapchainExtentHeight = extent.height()
+
+            val imageCountBuffer = stack.mallocInt(1)
+            checkVk(
+                vkGetSwapchainImagesKHR(device, swapchain, imageCountBuffer, null),
+                "failed to count swapchain images",
+            )
+            val images = stack.mallocLong(imageCountBuffer.get(0))
+            checkVk(
+                vkGetSwapchainImagesKHR(device, swapchain, imageCountBuffer, images),
+                "failed to read swapchain images",
+            )
+            swapchainImages = List(imageCountBuffer.get(0)) { images.get(it) }
+            renderFinishedSemaphores = swapchainImages.mapTo(mutableListOf()) { createSemaphore() }
+
+            swapchainImageViews =
+                swapchainImages.mapTo(mutableListOf()) { image ->
+                    createImageView(device, image, swapchainFormat)
+                }
         }
-    }
+
+    private fun createRenderPass() =
+        stackPush().use { stack ->
+            val colorAttachment =
+                VkAttachmentDescription.calloc(1, stack)
+                    .format(swapchainFormat)
+                    .samples(VK_SAMPLE_COUNT_1_BIT)
+                    .loadOp(VK_ATTACHMENT_LOAD_OP_CLEAR)
+                    .storeOp(VK_ATTACHMENT_STORE_OP_STORE)
+                    .stencilLoadOp(VK_ATTACHMENT_LOAD_OP_DONT_CARE)
+                    .stencilStoreOp(VK_ATTACHMENT_STORE_OP_DONT_CARE)
+                    .initialLayout(VK_IMAGE_LAYOUT_UNDEFINED)
+                    .finalLayout(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
+            val colorReference =
+                VkAttachmentReference.calloc(1, stack)
+                    .attachment(0)
+                    .layout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+            val subpass =
+                VkSubpassDescription.calloc(1, stack)
+                    .pipelineBindPoint(VK_PIPELINE_BIND_POINT_GRAPHICS)
+                    .colorAttachmentCount(1)
+                    .pColorAttachments(colorReference)
+            val dependency =
+                VkSubpassDependency.calloc(1, stack)
+                    .srcSubpass(VK_SUBPASS_EXTERNAL)
+                    .dstSubpass(0)
+                    .srcStageMask(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
+                    .dstStageMask(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
+                    .srcAccessMask(0)
+                    .dstAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)
+            val createInfo =
+                VkRenderPassCreateInfo.calloc(stack)
+                    .`sType$Default`()
+                    .pAttachments(colorAttachment)
+                    .pSubpasses(subpass)
+                    .pDependencies(dependency)
+            val renderPassHandle = stack.mallocLong(1)
+            checkVk(
+                vkCreateRenderPass(device, createInfo, null, renderPassHandle),
+                "failed to create render pass",
+            )
+            renderPass = renderPassHandle.get(0)
+        }
+
+    private fun createGraphicsPipeline() =
+        stackPush().use { stack ->
+            val vertexShader = loadShader("ui.vert.spv")
+            val fragmentShader = loadShader("ui.frag.spv")
+            val vertexModule = createShaderModule(device, vertexShader)
+            val fragmentModule = createShaderModule(device, fragmentShader)
+            try {
+                val stages = VkPipelineShaderStageCreateInfo.calloc(2, stack)
+                stages[0]
+                    .`sType$Default`()
+                    .stage(VK_SHADER_STAGE_VERTEX_BIT)
+                    .module(vertexModule)
+                    .pName(stack.UTF8("main"))
+                stages[1]
+                    .`sType$Default`()
+                    .stage(VK_SHADER_STAGE_FRAGMENT_BIT)
+                    .module(fragmentModule)
+                    .pName(stack.UTF8("main"))
+
+                val binding =
+                    VkVertexInputBindingDescription.calloc(1, stack)
+                        .binding(0)
+                        .stride(32)
+                        .inputRate(VK_VERTEX_INPUT_RATE_VERTEX)
+                val attributes = VkVertexInputAttributeDescription.calloc(3, stack)
+                attributes[0].location(0).binding(0).format(VK_FORMAT_R32G32_SFLOAT).offset(0)
+                attributes[1].location(1).binding(0).format(VK_FORMAT_R32G32_SFLOAT).offset(8)
+                attributes[2]
+                    .location(2)
+                    .binding(0)
+                    .format(VK_FORMAT_R32G32B32A32_SFLOAT)
+                    .offset(16)
+                val vertexInput =
+                    VkPipelineVertexInputStateCreateInfo.calloc(stack)
+                        .`sType$Default`()
+                        .pVertexBindingDescriptions(binding)
+                        .pVertexAttributeDescriptions(attributes)
+
+                val inputAssembly =
+                    VkPipelineInputAssemblyStateCreateInfo.calloc(stack)
+                        .`sType$Default`()
+                        .topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
+                        .primitiveRestartEnable(false)
+                val viewportState =
+                    VkPipelineViewportStateCreateInfo.calloc(stack)
+                        .`sType$Default`()
+                        .viewportCount(1)
+                        .scissorCount(1)
+                val rasterization =
+                    VkPipelineRasterizationStateCreateInfo.calloc(stack)
+                        .`sType$Default`()
+                        .depthClampEnable(false)
+                        .rasterizerDiscardEnable(false)
+                        .polygonMode(VK_POLYGON_MODE_FILL)
+                        .cullMode(VK_CULL_MODE_NONE)
+                        .frontFace(VK_FRONT_FACE_COUNTER_CLOCKWISE)
+                        .depthBiasEnable(false)
+                        .lineWidth(1f)
+                val multisample =
+                    VkPipelineMultisampleStateCreateInfo.calloc(stack)
+                        .`sType$Default`()
+                        .rasterizationSamples(VK_SAMPLE_COUNT_1_BIT)
+                        .sampleShadingEnable(false)
+                val blendAttachment =
+                    VkPipelineColorBlendAttachmentState.calloc(1, stack)
+                        .blendEnable(true)
+                        .srcColorBlendFactor(VK_BLEND_FACTOR_SRC_ALPHA)
+                        .dstColorBlendFactor(VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA)
+                        .colorBlendOp(VK_BLEND_OP_ADD)
+                        .srcAlphaBlendFactor(VK_BLEND_FACTOR_ONE)
+                        .dstAlphaBlendFactor(VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA)
+                        .alphaBlendOp(VK_BLEND_OP_ADD)
+                        .colorWriteMask(
+                            VK_COLOR_COMPONENT_R_BIT or
+                                VK_COLOR_COMPONENT_G_BIT or
+                                VK_COLOR_COMPONENT_B_BIT or
+                                VK_COLOR_COMPONENT_A_BIT
+                        )
+                val colorBlend =
+                    VkPipelineColorBlendStateCreateInfo.calloc(stack)
+                        .`sType$Default`()
+                        .logicOpEnable(false)
+                        .pAttachments(blendAttachment)
+                val dynamicStates =
+                    stack
+                        .mallocInt(2)
+                        .put(0, VK_DYNAMIC_STATE_VIEWPORT)
+                        .put(1, VK_DYNAMIC_STATE_SCISSOR)
+                val dynamicState =
+                    VkPipelineDynamicStateCreateInfo.calloc(stack)
+                        .`sType$Default`()
+                        .pDynamicStates(dynamicStates)
+                val pipelineInfo = VkGraphicsPipelineCreateInfo.calloc(1, stack)
+                pipelineInfo[0]
+                    .`sType$Default`()
+                    .pStages(stages)
+                    .pVertexInputState(vertexInput)
+                    .pInputAssemblyState(inputAssembly)
+                    .pViewportState(viewportState)
+                    .pRasterizationState(rasterization)
+                    .pMultisampleState(multisample)
+                    .pColorBlendState(colorBlend)
+                    .pDynamicState(dynamicState)
+                    .layout(pipelineLayout)
+                    .renderPass(renderPass)
+                    .subpass(0)
+                    .basePipelineHandle(VK_NULL_HANDLE)
+                    .basePipelineIndex(-1)
+                val pipelineHandle = stack.mallocLong(1)
+                checkVk(
+                    vkCreateGraphicsPipelines(
+                        device,
+                        VK_NULL_HANDLE,
+                        pipelineInfo,
+                        null,
+                        pipelineHandle,
+                    ),
+                    "failed to create graphics pipeline",
+                )
+                graphicsPipeline = pipelineHandle.get(0)
+            } finally {
+                vkDestroyShaderModule(device, vertexModule, null)
+                vkDestroyShaderModule(device, fragmentModule, null)
+                memFree(vertexShader)
+                memFree(fragmentShader)
+            }
+        }
 
     private fun recordFrame(
         scene: UiScene,
         batches: List<DrawBatch>,
         imageIndex: Int,
         captureBuffer: BufferAllocation?,
-    ) = stackPush().use { stack ->
-        val beginInfo = VkCommandBufferBeginInfo.calloc(stack)
-            .`sType$Default`()
-        checkVk(
-            vkBeginCommandBuffer(commandBuffer, beginInfo),
-            "failed to begin command buffer",
-        )
-
-        val clearValue = VkClearValue.calloc(1, stack)
-        clearValue[0].color().float32(
-            0,
-            scene.clearColor.red,
-        ).float32(1, scene.clearColor.green)
-            .float32(2, scene.clearColor.blue)
-            .float32(3, 1f)
-        val renderInfo = VkRenderPassBeginInfo.calloc(stack)
-            .`sType$Default`()
-            .renderPass(renderPass)
-            .framebuffer(framebuffers[imageIndex])
-            .renderArea {
-                it.offset { offset -> offset.set(0, 0) }
-                it.extent { extent ->
-                    extent.width(swapchainExtentWidth)
-                    extent.height(swapchainExtentHeight)
-                }
-            }
-            .pClearValues(clearValue)
-        vkCmdBeginRenderPass(commandBuffer, renderInfo, VK_SUBPASS_CONTENTS_INLINE)
-
-        val viewport = VkViewport.calloc(1, stack)
-        viewport[0]
-            .x(viewportX.toFloat())
-            .y(viewportY.toFloat())
-            .width(viewportWidth.toFloat())
-            .height(viewportHeight.toFloat())
-            .minDepth(0f)
-            .maxDepth(1f)
-        vkCmdSetViewport(commandBuffer, 0, viewport)
-        val scissors = VkRect2D.calloc(1, stack)
-        scissors[0]
-            .offset { offset -> offset.set(viewportX, viewportY) }
-            .extent { extent ->
-                extent.width(viewportWidth)
-                extent.height(viewportHeight)
-            }
-        vkCmdSetScissor(commandBuffer, 0, scissors)
-
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline)
-        vkCmdPushConstants(
-            commandBuffer,
-            pipelineLayout,
-            VK_SHADER_STAGE_VERTEX_BIT,
-            0,
-            stack.floats(scene.width, scene.height),
-        )
-
-        val vertexData = flattenBatches(batches)
-        if (vertexData.isNotEmpty()) {
-            val allocation = ensureVertexBuffer(vertexData.size * Float.SIZE_BYTES)
-            writeVertexData(allocation, vertexData)
-            vkCmdBindVertexBuffers(
-                commandBuffer,
-                0,
-                stack.longs(allocation.buffer),
-                stack.longs(0L),
+    ) =
+        stackPush().use { stack ->
+            val beginInfo = VkCommandBufferBeginInfo.calloc(stack).`sType$Default`()
+            checkVk(
+                vkBeginCommandBuffer(commandBuffer, beginInfo),
+                "failed to begin command buffer",
             )
-            var firstVertex = 0
-            batches.forEach { batch ->
-                vkCmdBindDescriptorSets(
-                    commandBuffer,
-                    VK_PIPELINE_BIND_POINT_GRAPHICS,
-                    pipelineLayout,
+
+            val clearValue = VkClearValue.calloc(1, stack)
+            clearValue[0]
+                .color()
+                .float32(
                     0,
-                    stack.longs(batch.texture.descriptorSet),
-                    null,
+                    scene.clearColor.red,
                 )
-                val vertexCount = batch.vertices.size / VERTEX_FLOAT_COUNT
-                vkCmdDraw(commandBuffer, vertexCount, 1, firstVertex, 0)
-                firstVertex += vertexCount
+                .float32(1, scene.clearColor.green)
+                .float32(2, scene.clearColor.blue)
+                .float32(3, 1f)
+            val renderInfo =
+                VkRenderPassBeginInfo.calloc(stack)
+                    .`sType$Default`()
+                    .renderPass(renderPass)
+                    .framebuffer(framebuffers[imageIndex])
+                    .renderArea {
+                        it.offset { offset -> offset.set(0, 0) }
+                        it.extent { extent ->
+                            extent.width(swapchainExtentWidth)
+                            extent.height(swapchainExtentHeight)
+                        }
+                    }
+                    .pClearValues(clearValue)
+            vkCmdBeginRenderPass(commandBuffer, renderInfo, VK_SUBPASS_CONTENTS_INLINE)
+
+            val viewport = VkViewport.calloc(1, stack)
+            viewport[0]
+                .x(viewportX.toFloat())
+                .y(viewportY.toFloat())
+                .width(viewportWidth.toFloat())
+                .height(viewportHeight.toFloat())
+                .minDepth(0f)
+                .maxDepth(1f)
+            vkCmdSetViewport(commandBuffer, 0, viewport)
+            val scissors = VkRect2D.calloc(1, stack)
+            scissors[0]
+                .offset { offset -> offset.set(viewportX, viewportY) }
+                .extent { extent ->
+                    extent.width(viewportWidth)
+                    extent.height(viewportHeight)
+                }
+            vkCmdSetScissor(commandBuffer, 0, scissors)
+
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline)
+            vkCmdPushConstants(
+                commandBuffer,
+                pipelineLayout,
+                VK_SHADER_STAGE_VERTEX_BIT,
+                0,
+                stack.floats(scene.width, scene.height),
+            )
+
+            val vertexData = flattenBatches(batches)
+            if (vertexData.isNotEmpty()) {
+                val allocation = ensureVertexBuffer(vertexData.size * Float.SIZE_BYTES)
+                writeVertexData(allocation, vertexData)
+                vkCmdBindVertexBuffers(
+                    commandBuffer,
+                    0,
+                    stack.longs(allocation.buffer),
+                    stack.longs(0L),
+                )
+                var firstVertex = 0
+                batches.forEach { batch ->
+                    vkCmdBindDescriptorSets(
+                        commandBuffer,
+                        VK_PIPELINE_BIND_POINT_GRAPHICS,
+                        pipelineLayout,
+                        0,
+                        stack.longs(batch.texture.descriptorSet),
+                        null,
+                    )
+                    val vertexCount = batch.vertices.size / VERTEX_FLOAT_COUNT
+                    vkCmdDraw(commandBuffer, vertexCount, 1, firstVertex, 0)
+                    firstVertex += vertexCount
+                }
             }
+            vkCmdEndRenderPass(commandBuffer)
+
+            if (captureBuffer != null) {
+                val imageBarrier = VkImageMemoryBarrier.calloc(1, stack)
+                imageBarrier[0]
+                    .`sType$Default`()
+                    .srcAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)
+                    .dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT)
+                    .oldLayout(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
+                    .newLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+                    .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .image(swapchainImages[imageIndex])
+                    .subresourceRange { range ->
+                        range.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
+                        range.baseMipLevel(0)
+                        range.levelCount(1)
+                        range.baseArrayLayer(0)
+                        range.layerCount(1)
+                    }
+                vkCmdPipelineBarrier(
+                    commandBuffer,
+                    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    0,
+                    null,
+                    null,
+                    imageBarrier,
+                )
+
+                val copy = VkBufferImageCopy.calloc(1, stack)
+                copy[0]
+                    .bufferOffset(0)
+                    .bufferRowLength(0)
+                    .bufferImageHeight(0)
+                    .imageSubresource { subresource ->
+                        subresource.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
+                        subresource.mipLevel(0)
+                        subresource.baseArrayLayer(0)
+                        subresource.layerCount(1)
+                    }
+                    .imageOffset { offset -> offset.set(0, 0, 0) }
+                    .imageExtent { extent ->
+                        extent.set(swapchainExtentWidth, swapchainExtentHeight, 1)
+                    }
+                vkCmdCopyImageToBuffer(
+                    commandBuffer,
+                    swapchainImages[imageIndex],
+                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                    captureBuffer.buffer,
+                    copy,
+                )
+
+                imageBarrier[0]
+                    .srcAccessMask(VK_ACCESS_TRANSFER_READ_BIT)
+                    .dstAccessMask(0)
+                    .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+                    .newLayout(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
+                vkCmdPipelineBarrier(
+                    commandBuffer,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                    0,
+                    null,
+                    null,
+                    imageBarrier,
+                )
+            }
+
+            checkVk(vkEndCommandBuffer(commandBuffer), "failed to end command buffer")
         }
-        vkCmdEndRenderPass(commandBuffer)
 
-        if (captureBuffer != null) {
-            val imageBarrier = VkImageMemoryBarrier.calloc(1, stack)
-            imageBarrier[0]
-                .`sType$Default`()
-                .srcAccessMask(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)
-                .dstAccessMask(VK_ACCESS_TRANSFER_READ_BIT)
-                .oldLayout(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
-                .newLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
-                .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
-                .dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
-                .image(swapchainImages[imageIndex])
-                .subresourceRange { range ->
-                    range.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
-                    range.baseMipLevel(0)
-                    range.levelCount(1)
-                    range.baseArrayLayer(0)
-                    range.layerCount(1)
-                }
-            vkCmdPipelineBarrier(
-                commandBuffer,
-                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                VK_PIPELINE_STAGE_TRANSFER_BIT,
-                0,
-                null,
-                null,
-                imageBarrier,
-            )
-
-            val copy = VkBufferImageCopy.calloc(1, stack)
-            copy[0]
-                .bufferOffset(0)
-                .bufferRowLength(0)
-                .bufferImageHeight(0)
-                .imageSubresource { subresource ->
-                    subresource.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
-                    subresource.mipLevel(0)
-                    subresource.baseArrayLayer(0)
-                    subresource.layerCount(1)
-                }
-                .imageOffset { offset -> offset.set(0, 0, 0) }
-                .imageExtent { extent ->
-                    extent.set(swapchainExtentWidth, swapchainExtentHeight, 1)
-                }
-            vkCmdCopyImageToBuffer(
-                commandBuffer,
-                swapchainImages[imageIndex],
-                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                captureBuffer.buffer,
-                copy,
-            )
-
-            imageBarrier[0]
-                .srcAccessMask(VK_ACCESS_TRANSFER_READ_BIT)
-                .dstAccessMask(0)
-                .oldLayout(VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
-                .newLayout(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
-            vkCmdPipelineBarrier(
-                commandBuffer,
-                VK_PIPELINE_STAGE_TRANSFER_BIT,
-                VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-                0,
-                null,
-                null,
-                imageBarrier,
+    private fun submitFrame(imageIndex: Int) =
+        stackPush().use { stack ->
+            val waitStages = stack.mallocInt(1)
+            waitStages.put(0, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
+            val submitInfo =
+                VkSubmitInfo.calloc(stack)
+                    .`sType$Default`()
+                    .waitSemaphoreCount(1)
+                    .pWaitSemaphores(stack.longs(imageAvailableSemaphore))
+                    .pWaitDstStageMask(waitStages)
+                    .pCommandBuffers(stack.pointers(commandBuffer))
+                    .pSignalSemaphores(stack.longs(renderFinishedSemaphores[imageIndex]))
+            checkVk(
+                vkQueueSubmit(graphicsQueue, submitInfo, inFlightFence),
+                "failed to submit vulkan frame",
             )
         }
 
-        checkVk(vkEndCommandBuffer(commandBuffer), "failed to end command buffer")
-    }
-
-    private fun submitFrame(imageIndex: Int) = stackPush().use { stack ->
-        val waitStages = stack.mallocInt(1)
-        waitStages.put(0, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
-        val submitInfo = VkSubmitInfo.calloc(stack)
-            .`sType$Default`()
-            .waitSemaphoreCount(1)
-            .pWaitSemaphores(stack.longs(imageAvailableSemaphore))
-            .pWaitDstStageMask(waitStages)
-            .pCommandBuffers(stack.pointers(commandBuffer))
-            .pSignalSemaphores(stack.longs(renderFinishedSemaphores[imageIndex]))
-        checkVk(
-            vkQueueSubmit(graphicsQueue, submitInfo, inFlightFence),
-            "failed to submit vulkan frame",
-        )
-    }
-
-    private fun present(imageIndex: Int): Int = stackPush().use { stack ->
-        val presentInfo = VkPresentInfoKHR.calloc(stack)
-            .sType(VK_STRUCTURE_TYPE_PRESENT_INFO_KHR)
-            .pWaitSemaphores(stack.longs(renderFinishedSemaphores[imageIndex]))
-            .swapchainCount(1)
-            .pSwapchains(stack.longs(swapchain))
-            .pImageIndices(stack.ints(imageIndex))
-        vkQueuePresentKHR(presentQueue, presentInfo)
-    }
+    private fun present(imageIndex: Int): Int =
+        stackPush().use { stack ->
+            val presentInfo =
+                VkPresentInfoKHR.calloc(stack)
+                    .sType(VK_STRUCTURE_TYPE_PRESENT_INFO_KHR)
+                    .pWaitSemaphores(stack.longs(renderFinishedSemaphores[imageIndex]))
+                    .swapchainCount(1)
+                    .pSwapchains(stack.longs(swapchain))
+                    .pImageIndices(stack.ints(imageIndex))
+            vkQueuePresentKHR(presentQueue, presentInfo)
+        }
 
     private fun buildBatches(scene: UiScene): List<DrawBatch> {
         val batches = mutableListOf<DrawBatch>()
         scene.items.sortedBy(UiItem::layer).forEach { item ->
             when (item) {
-                is PanelItem -> appendPanel(
-                    batches,
-                    requireWhiteTexture(),
-                    item.bounds,
-                    item.color,
-                    item.transform,
-                )
+                is PanelItem ->
+                    appendPanel(
+                        batches,
+                        requireWhiteTexture(),
+                        item.bounds,
+                        item.color,
+                        item.transform,
+                    )
                 is ImageItem -> appendImage(batches, item)
                 is TextItem -> appendText(batches, item)
                 is ChoiceItem -> {
@@ -1288,12 +1333,13 @@ public class VulkanRenderer(
                         batches,
                         TextItem(
                             id = "${item.id}-text",
-                            bounds = Rect(
-                                item.bounds.x + 22f,
-                                item.bounds.y + 9f,
-                                item.bounds.width - 44f,
-                                item.bounds.height - 12f,
-                            ),
+                            bounds =
+                                Rect(
+                                    item.bounds.x + 22f,
+                                    item.bounds.y + 9f,
+                                    item.bounds.width - 44f,
+                                    item.bounds.height - 12f,
+                                ),
                             layer = item.layer + 1,
                             transform = item.transform,
                             text = item.text,
@@ -1349,11 +1395,12 @@ public class VulkanRenderer(
         val lineStep = item.style.size * item.style.lineHeight
         lines.forEachIndexed { lineIndex, line ->
             val lineWidth = fontAtlas.measure(line, item.style.size)
-            val startX = when (item.style.align) {
-                TextAlign.LEFT -> item.bounds.x
-                TextAlign.CENTER -> item.bounds.x + (item.bounds.width - lineWidth) / 2f
-                TextAlign.RIGHT -> item.bounds.x + item.bounds.width - lineWidth
-            }
+            val startX =
+                when (item.style.align) {
+                    TextAlign.LEFT -> item.bounds.x
+                    TextAlign.CENTER -> item.bounds.x + (item.bounds.width - lineWidth) / 2f
+                    TextAlign.RIGHT -> item.bounds.x + item.bounds.width - lineWidth
+                }
             var x = startX
             val y = item.bounds.y + lineIndex * lineStep
             line.forEach { character ->
@@ -1401,19 +1448,21 @@ public class VulkanRenderer(
         color: Color,
         transform: Transform,
     ) {
-        val batch = if (batches.lastOrNull()?.texture === texture) {
-            batches.last()
-        } else {
-            DrawBatch(texture).also(batches::add)
-        }
+        val batch =
+            if (batches.lastOrNull()?.texture === texture) {
+                batches.last()
+            } else {
+                DrawBatch(texture).also(batches::add)
+            }
         val topLeft = transformPoint(bounds.x, bounds.y, bounds, transform)
         val topRight = transformPoint(bounds.x + bounds.width, bounds.y, bounds, transform)
-        val bottomRight = transformPoint(
-            bounds.x + bounds.width,
-            bounds.y + bounds.height,
-            bounds,
-            transform,
-        )
+        val bottomRight =
+            transformPoint(
+                bounds.x + bounds.width,
+                bounds.y + bounds.height,
+                bounds,
+                transform,
+            )
         val bottomLeft = transformPoint(bounds.x, bounds.y + bounds.height, bounds, transform)
         addVertex(batch, topLeft, uv.u0, uv.v0, color)
         addVertex(batch, topRight, uv.u1, uv.v0, color)
@@ -1477,12 +1526,13 @@ public class VulkanRenderer(
         if (current != null && current.size >= byteCount) return current
         vkDeviceWaitIdle(device)
         current?.let(::destroyBuffer)
-        val allocation = createBuffer(
-            size = maxOf(VERTEX_BUFFER_START_SIZE, byteCount.toLong() * 2L),
-            usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-            properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT or
-                VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        )
+        val allocation =
+            createBuffer(
+                size = maxOf(VERTEX_BUFFER_START_SIZE, byteCount.toLong() * 2L),
+                usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                properties =
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT or VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            )
         vertexBuffer = allocation
         return allocation
     }
@@ -1501,10 +1551,11 @@ public class VulkanRenderer(
                 ),
                 "failed to map vertex memory",
             )
-            val mapped = memByteBuffer(
-                mappedPointer.get(0),
-                data.size * Float.SIZE_BYTES,
-            )
+            val mapped =
+                memByteBuffer(
+                    mappedPointer.get(0),
+                    data.size * Float.SIZE_BYTES,
+                )
             data.forEach(mapped::putFloat)
             vkUnmapMemory(device, allocation.memory)
         }
@@ -1513,8 +1564,8 @@ public class VulkanRenderer(
         createBuffer(
             size = width.toLong() * height.toLong() * 4L,
             usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-            properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT or
-                VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            properties =
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT or VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         )
 
     private fun writeCapture(buffer: BufferAllocation, path: Path) =
@@ -1546,8 +1597,7 @@ public class VulkanRenderer(
                     val blue: Int
                     when (swapchainFormat) {
                         VK_FORMAT_B8G8R8A8_SRGB,
-                        VK_FORMAT_B8G8R8A8_UNORM,
-                        -> {
+                        VK_FORMAT_B8G8R8A8_UNORM -> {
                             blue = channel0
                             green = channel1
                             red = channel2
@@ -1608,23 +1658,25 @@ public class VulkanRenderer(
                 formatProperties,
             )
             require(
-                formatProperties.optimalTilingFeatures() and VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT != 0,
+                formatProperties.optimalTilingFeatures() and VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT !=
+                    0
             ) {
                 "rgba8 textures are not supported"
             }
 
-            val imageInfo = VkImageCreateInfo.calloc(stack)
-                .`sType$Default`()
-                .imageType(VK_IMAGE_TYPE_2D)
-                .format(VK_FORMAT_R8G8B8A8_UNORM)
-                .extent { extent -> extent.set(width, height, 1) }
-                .mipLevels(1)
-                .arrayLayers(1)
-                .samples(VK_SAMPLE_COUNT_1_BIT)
-                .tiling(VK_IMAGE_TILING_OPTIMAL)
-                .usage(VK_IMAGE_USAGE_TRANSFER_DST_BIT or VK_IMAGE_USAGE_SAMPLED_BIT)
-                .sharingMode(VK_SHARING_MODE_EXCLUSIVE)
-                .initialLayout(VK_IMAGE_LAYOUT_UNDEFINED)
+            val imageInfo =
+                VkImageCreateInfo.calloc(stack)
+                    .`sType$Default`()
+                    .imageType(VK_IMAGE_TYPE_2D)
+                    .format(VK_FORMAT_R8G8B8A8_UNORM)
+                    .extent { extent -> extent.set(width, height, 1) }
+                    .mipLevels(1)
+                    .arrayLayers(1)
+                    .samples(VK_SAMPLE_COUNT_1_BIT)
+                    .tiling(VK_IMAGE_TILING_OPTIMAL)
+                    .usage(VK_IMAGE_USAGE_TRANSFER_DST_BIT or VK_IMAGE_USAGE_SAMPLED_BIT)
+                    .sharingMode(VK_SHARING_MODE_EXCLUSIVE)
+                    .initialLayout(VK_IMAGE_LAYOUT_UNDEFINED)
             val imageHandle = stack.mallocLong(1)
             checkVk(
                 vkCreateImage(device, imageInfo, null, imageHandle),
@@ -1633,15 +1685,16 @@ public class VulkanRenderer(
             val image = imageHandle.get(0)
             val requirements = VkMemoryRequirements.malloc(stack)
             vkGetImageMemoryRequirements(device, image, requirements)
-            val allocateInfo = VkMemoryAllocateInfo.calloc(stack)
-                .`sType$Default`()
-                .allocationSize(requirements.size())
-                .memoryTypeIndex(
-                    findMemoryType(
-                        requirements.memoryTypeBits(),
-                        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                    ),
-                )
+            val allocateInfo =
+                VkMemoryAllocateInfo.calloc(stack)
+                    .`sType$Default`()
+                    .allocationSize(requirements.size())
+                    .memoryTypeIndex(
+                        findMemoryType(
+                            requirements.memoryTypeBits(),
+                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                        )
+                    )
             val memoryHandle = stack.mallocLong(1)
             checkVk(
                 vkAllocateMemory(device, allocateInfo, null, memoryHandle),
@@ -1654,14 +1707,19 @@ public class VulkanRenderer(
             )
             val view = createImageView(device, image, VK_FORMAT_R8G8B8A8_UNORM)
 
-            val staging = createBuffer(
-                size = pixels.remaining().toLong(),
-                usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT or
-                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-            )
+            val staging =
+                createBuffer(
+                    size = pixels.remaining().toLong(),
+                    usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                    properties =
+                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT or VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                )
             writeBuffer(staging, pixels)
-            transitionTexture(image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+            transitionTexture(
+                image,
+                VK_IMAGE_LAYOUT_UNDEFINED,
+                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            )
             copyBufferToImage(staging.buffer, image, width, height)
             transitionTexture(
                 image,
@@ -1770,18 +1828,20 @@ public class VulkanRenderer(
     private fun recordSingleTimeCommand(block: (VkCommandBuffer) -> Unit) {
         stackPush().use { stack ->
             vkResetCommandBuffer(commandBuffer, 0)
-            val beginInfo = VkCommandBufferBeginInfo.calloc(stack)
-                .`sType$Default`()
-                .flags(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT)
+            val beginInfo =
+                VkCommandBufferBeginInfo.calloc(stack)
+                    .`sType$Default`()
+                    .flags(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT)
             checkVk(
                 vkBeginCommandBuffer(commandBuffer, beginInfo),
                 "failed to begin upload command buffer",
             )
             block(commandBuffer)
             checkVk(vkEndCommandBuffer(commandBuffer), "failed to end upload command buffer")
-            val submitInfo = VkSubmitInfo.calloc(stack)
-                .`sType$Default`()
-                .pCommandBuffers(stack.pointers(commandBuffer))
+            val submitInfo =
+                VkSubmitInfo.calloc(stack)
+                    .`sType$Default`()
+                    .pCommandBuffers(stack.pointers(commandBuffer))
             checkVk(
                 vkQueueSubmit(graphicsQueue, submitInfo, VK_NULL_HANDLE),
                 "failed to submit upload command",
@@ -1792,37 +1852,41 @@ public class VulkanRenderer(
 
     private fun allocateTextureDescriptor(imageView: Long): Long =
         stackPush().use { stack ->
-            val allocateInfo = VkDescriptorSetAllocateInfo.calloc(stack)
-                .`sType$Default`()
-                .descriptorPool(descriptorPool)
-                .pSetLayouts(stack.longs(descriptorSetLayout))
+            val allocateInfo =
+                VkDescriptorSetAllocateInfo.calloc(stack)
+                    .`sType$Default`()
+                    .descriptorPool(descriptorPool)
+                    .pSetLayouts(stack.longs(descriptorSetLayout))
             val descriptorSet = stack.mallocLong(1)
             checkVk(
                 vkAllocateDescriptorSets(device, allocateInfo, descriptorSet),
                 "failed to allocate texture descriptor",
             )
-            val imageInfo = VkDescriptorImageInfo.calloc(1, stack)
-                .sampler(sampler)
-                .imageView(imageView)
-                .imageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-            val write = VkWriteDescriptorSet.calloc(1, stack)
-                .`sType$Default`()
-                .dstSet(descriptorSet.get(0))
-                .dstBinding(0)
-                .descriptorCount(1)
-                .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-                .pImageInfo(imageInfo)
+            val imageInfo =
+                VkDescriptorImageInfo.calloc(1, stack)
+                    .sampler(sampler)
+                    .imageView(imageView)
+                    .imageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+            val write =
+                VkWriteDescriptorSet.calloc(1, stack)
+                    .`sType$Default`()
+                    .dstSet(descriptorSet.get(0))
+                    .dstBinding(0)
+                    .descriptorCount(1)
+                    .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
+                    .pImageInfo(imageInfo)
             vkUpdateDescriptorSets(device, write, null)
             descriptorSet.get(0)
         }
 
     private fun createBuffer(size: Long, usage: Int, properties: Int): BufferAllocation =
         stackPush().use { stack ->
-            val createInfo = VkBufferCreateInfo.calloc(stack)
-                .`sType$Default`()
-                .size(size)
-                .usage(usage)
-                .sharingMode(VK_SHARING_MODE_EXCLUSIVE)
+            val createInfo =
+                VkBufferCreateInfo.calloc(stack)
+                    .`sType$Default`()
+                    .size(size)
+                    .usage(usage)
+                    .sharingMode(VK_SHARING_MODE_EXCLUSIVE)
             val bufferHandle = stack.mallocLong(1)
             checkVk(
                 vkCreateBuffer(device, createInfo, null, bufferHandle),
@@ -1831,12 +1895,13 @@ public class VulkanRenderer(
             val buffer = bufferHandle.get(0)
             val memoryRequirements = VkMemoryRequirements.malloc(stack)
             vkGetBufferMemoryRequirements(device, buffer, memoryRequirements)
-            val allocateInfo = VkMemoryAllocateInfo.calloc(stack)
-                .`sType$Default`()
-                .allocationSize(memoryRequirements.size())
-                .memoryTypeIndex(
-                    findMemoryType(memoryRequirements.memoryTypeBits(), properties),
-                )
+            val allocateInfo =
+                VkMemoryAllocateInfo.calloc(stack)
+                    .`sType$Default`()
+                    .allocationSize(memoryRequirements.size())
+                    .memoryTypeIndex(
+                        findMemoryType(memoryRequirements.memoryTypeBits(), properties)
+                    )
             val memoryHandle = stack.mallocLong(1)
             checkVk(
                 vkAllocateMemory(device, allocateInfo, null, memoryHandle),
@@ -1879,21 +1944,16 @@ public class VulkanRenderer(
     }
 
     private fun createFramebuffers() {
-        framebuffers = swapchainImageViews.mapTo(mutableListOf()) { view ->
-            stackPush().use { stack ->
-                createFramebuffer(stack, view)
+        framebuffers =
+            swapchainImageViews.mapTo(mutableListOf()) { view ->
+                stackPush().use { stack -> createFramebuffer(stack, view) }
             }
-        }
     }
 
     private fun destroySwapchainObjects() {
-        framebuffers.forEach { framebuffer ->
-            vkDestroyFramebuffer(device, framebuffer, null)
-        }
+        framebuffers.forEach { framebuffer -> vkDestroyFramebuffer(device, framebuffer, null) }
         framebuffers.clear()
-        swapchainImageViews.forEach { view ->
-            vkDestroyImageView(device, view, null)
-        }
+        swapchainImageViews.forEach { view -> vkDestroyImageView(device, view, null) }
         swapchainImageViews.clear()
         renderFinishedSemaphores.forEach { semaphore ->
             vkDestroySemaphore(device, semaphore, null)
@@ -1907,10 +1967,11 @@ public class VulkanRenderer(
     }
 
     private fun updateViewport() {
-        val scale = min(
-            swapchainExtentWidth.toFloat() / sceneWidth,
-            swapchainExtentHeight.toFloat() / sceneHeight,
-        )
+        val scale =
+            min(
+                swapchainExtentWidth.toFloat() / sceneWidth,
+                swapchainExtentHeight.toFloat() / sceneHeight,
+            )
         viewportWidth = (sceneWidth * scale).toInt().coerceAtLeast(1)
         viewportHeight = (sceneHeight * scale).toInt().coerceAtLeast(1)
         viewportX = (swapchainExtentWidth - viewportWidth) / 2
@@ -1986,31 +2047,30 @@ public class VulkanRenderer(
                 supportedCompositeAlpha = capabilities.supportedCompositeAlpha(),
                 currentTransform = capabilities.currentTransform(),
                 supportedTransforms = capabilities.supportedTransforms(),
-                formats = List(formatCount.get(0)) { index ->
-                    SurfaceFormat(
-                        format = formats[index].format(),
-                        colorSpace = formats[index].colorSpace(),
-                    )
-                },
-                presentModes = List(presentModeCount.get(0)) { index ->
-                    presentModes.get(index)
-                },
+                formats =
+                    List(formatCount.get(0)) { index ->
+                        SurfaceFormat(
+                            format = formats[index].format(),
+                            colorSpace = formats[index].colorSpace(),
+                        )
+                    },
+                presentModes = List(presentModeCount.get(0)) { index -> presentModes.get(index) },
             )
         }
 
     private fun chooseSurfaceFormat(formats: List<SurfaceFormat>): SurfaceFormat {
         check(formats.isNotEmpty()) { "surface reports no formats" }
-        val preferred = formats.firstOrNull {
-            it.format == VK_FORMAT_B8G8R8A8_SRGB &&
-                it.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR
-        } ?: formats.firstOrNull {
-            it.format == VK_FORMAT_R8G8B8A8_SRGB &&
-                it.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR
-        } ?: formats.firstOrNull {
-            it.format == VK_FORMAT_B8G8R8A8_UNORM
-        } ?: formats.firstOrNull {
-            it.format == VK_FORMAT_R8G8B8A8_UNORM
-        }
+        val preferred =
+            formats.firstOrNull {
+                it.format == VK_FORMAT_B8G8R8A8_SRGB &&
+                    it.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR
+            }
+                ?: formats.firstOrNull {
+                    it.format == VK_FORMAT_R8G8B8A8_SRGB &&
+                        it.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR
+                }
+                ?: formats.firstOrNull { it.format == VK_FORMAT_B8G8R8A8_UNORM }
+                ?: formats.firstOrNull { it.format == VK_FORMAT_R8G8B8A8_UNORM }
         return preferred ?: formats.first()
     }
 
@@ -2030,10 +2090,10 @@ public class VulkanRenderer(
 
     private fun chooseCompositeAlpha(capabilities: SwapchainSupport): Int =
         when {
-            capabilities.supportedCompositeAlpha and
-                VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR != 0 -> VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR
-            capabilities.supportedCompositeAlpha and
-                VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR != 0 -> VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR
+            capabilities.supportedCompositeAlpha and VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR != 0 ->
+                VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR
+            capabilities.supportedCompositeAlpha and VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR != 0 ->
+                VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR
             else -> VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR
         }
 
@@ -2052,14 +2112,18 @@ public class VulkanRenderer(
             val height = stack.mallocInt(1)
             glfwGetFramebufferSize(window, width, height)
             extent.set(
-                width.get(0).coerceIn(
-                    capabilities.minExtentWidth,
-                    capabilities.maxExtentWidth,
-                ),
-                height.get(0).coerceIn(
-                    capabilities.minExtentHeight,
-                    capabilities.maxExtentHeight,
-                ),
+                width
+                    .get(0)
+                    .coerceIn(
+                        capabilities.minExtentWidth,
+                        capabilities.maxExtentWidth,
+                    ),
+                height
+                    .get(0)
+                    .coerceIn(
+                        capabilities.minExtentHeight,
+                        capabilities.maxExtentHeight,
+                    ),
             )
         }
         return extent
@@ -2091,7 +2155,8 @@ public class VulkanRenderer(
         }
         val families = runCatching { findQueueFamilies(device) }.getOrNull() ?: return false
         val support = runCatching { querySwapchainSupport(device) }.getOrNull() ?: return false
-        return families.graphics >= 0 && families.present >= 0 &&
+        return families.graphics >= 0 &&
+            families.present >= 0 &&
             support.formats.isNotEmpty() &&
             support.presentModes.isNotEmpty()
     }
@@ -2160,7 +2225,8 @@ public class VulkanRenderer(
             for (index in 0 until memoryProperties.memoryTypeCount()) {
                 if (
                     typeFilter and (1 shl index) != 0 &&
-                    memoryProperties.memoryTypes(index).propertyFlags() and properties == properties
+                        memoryProperties.memoryTypes(index).propertyFlags() and properties ==
+                            properties
                 ) {
                     return index
                 }
@@ -2172,42 +2238,45 @@ public class VulkanRenderer(
         device: VkDevice,
         image: Long,
         format: Int,
-    ): Long = stackPush().use { stack ->
-        val viewInfo = VkImageViewCreateInfo.calloc(stack)
-            .`sType$Default`()
-            .image(image)
-            .viewType(VK_IMAGE_VIEW_TYPE_2D)
-            .format(format)
-            .components { components ->
-                components.r(VK_COMPONENT_SWIZZLE_IDENTITY)
-                components.g(VK_COMPONENT_SWIZZLE_IDENTITY)
-                components.b(VK_COMPONENT_SWIZZLE_IDENTITY)
-                components.a(VK_COMPONENT_SWIZZLE_IDENTITY)
-            }
-            .subresourceRange { range ->
-                range.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
-                range.baseMipLevel(0)
-                range.levelCount(1)
-                range.baseArrayLayer(0)
-                range.layerCount(1)
-            }
-        val view = stack.mallocLong(1)
-        checkVk(
-            vkCreateImageView(device, viewInfo, null, view),
-            "failed to create image view",
-        )
-        view.get(0)
-    }
+    ): Long =
+        stackPush().use { stack ->
+            val viewInfo =
+                VkImageViewCreateInfo.calloc(stack)
+                    .`sType$Default`()
+                    .image(image)
+                    .viewType(VK_IMAGE_VIEW_TYPE_2D)
+                    .format(format)
+                    .components { components ->
+                        components.r(VK_COMPONENT_SWIZZLE_IDENTITY)
+                        components.g(VK_COMPONENT_SWIZZLE_IDENTITY)
+                        components.b(VK_COMPONENT_SWIZZLE_IDENTITY)
+                        components.a(VK_COMPONENT_SWIZZLE_IDENTITY)
+                    }
+                    .subresourceRange { range ->
+                        range.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
+                        range.baseMipLevel(0)
+                        range.levelCount(1)
+                        range.baseArrayLayer(0)
+                        range.layerCount(1)
+                    }
+            val view = stack.mallocLong(1)
+            checkVk(
+                vkCreateImageView(device, viewInfo, null, view),
+                "failed to create image view",
+            )
+            view.get(0)
+        }
 
     private fun createFramebuffer(stack: MemoryStack, view: Long): Long {
-        val createInfo = VkFramebufferCreateInfo.calloc(stack)
-            .`sType$Default`()
-            .renderPass(renderPass)
-            .attachmentCount(1)
-            .pAttachments(stack.longs(view))
-            .width(swapchainExtentWidth)
-            .height(swapchainExtentHeight)
-            .layers(1)
+        val createInfo =
+            VkFramebufferCreateInfo.calloc(stack)
+                .`sType$Default`()
+                .renderPass(renderPass)
+                .attachmentCount(1)
+                .pAttachments(stack.longs(view))
+                .width(swapchainExtentWidth)
+                .height(swapchainExtentHeight)
+                .layers(1)
         val framebuffer = stack.mallocLong(1)
         checkVk(
             vkCreateFramebuffer(device, createInfo, null, framebuffer),
@@ -2218,9 +2287,7 @@ public class VulkanRenderer(
 
     private fun createShaderModule(device: VkDevice, code: ByteBuffer): Long =
         stackPush().use { stack ->
-            val createInfo = VkShaderModuleCreateInfo.calloc(stack)
-                .`sType$Default`()
-                .pCode(code)
+            val createInfo = VkShaderModuleCreateInfo.calloc(stack).`sType$Default`().pCode(code)
             val module = stack.mallocLong(1)
             checkVk(
                 vkCreateShaderModule(device, createInfo, null, module),
@@ -2229,27 +2296,29 @@ public class VulkanRenderer(
             module.get(0)
         }
 
-    private fun createSemaphore(): Long = stackPush().use { stack ->
-        val createInfo = VkSemaphoreCreateInfo.calloc(stack).`sType$Default`()
-        val semaphore = stack.mallocLong(1)
-        checkVk(
-            vkCreateSemaphore(device, createInfo, null, semaphore),
-            "failed to create render semaphore",
-        )
-        semaphore.get(0)
-    }
+    private fun createSemaphore(): Long =
+        stackPush().use { stack ->
+            val createInfo = VkSemaphoreCreateInfo.calloc(stack).`sType$Default`()
+            val semaphore = stack.mallocLong(1)
+            checkVk(
+                vkCreateSemaphore(device, createInfo, null, semaphore),
+                "failed to create render semaphore",
+            )
+            semaphore.get(0)
+        }
 
     private fun loadShader(name: String): ByteBuffer {
-        val bytes = javaClass.getResourceAsStream("/shaders/$name")?.use { stream ->
-            stream.readBytes()
-        } ?: error("shader '$name' is missing")
+        val bytes =
+            javaClass.getResourceAsStream("/shaders/$name")?.use { stream -> stream.readBytes() }
+                ?: error("shader '$name' is missing")
         val buffer = memAlloc(bytes.size)
         buffer.put(bytes).flip()
         return buffer
     }
 
     private fun rgbaWhitePixel(): ByteBuffer =
-        ByteBuffer.allocateDirect(4).put(0xff.toByte())
+        ByteBuffer.allocateDirect(4)
+            .put(0xff.toByte())
             .put(0xff.toByte())
             .put(0xff.toByte())
             .put(0xff.toByte())
@@ -2275,8 +2344,7 @@ public class VulkanRenderer(
         }
     }
 
-    private fun isMac(): Boolean =
-        System.getProperty("os.name").lowercase().contains("mac")
+    private fun isMac(): Boolean = System.getProperty("os.name").lowercase().contains("mac")
 
     private data class Uv(
         val u0: Float,

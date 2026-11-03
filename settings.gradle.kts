@@ -1,13 +1,6 @@
-dependencyResolutionManagement {
-    @Suppress("UnstableApiUsage")
-    repositories {
-        mavenCentral()
-    }
-}
+dependencyResolutionManagement { @Suppress("UnstableApiUsage") repositories { mavenCentral() } }
 
-plugins {
-    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
-}
+plugins { id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0" }
 
 include(
     ":akt-core",

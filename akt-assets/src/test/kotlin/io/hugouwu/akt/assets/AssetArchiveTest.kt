@@ -1,18 +1,17 @@
 package io.hugouwu.akt.assets
 
 import io.hugouwu.akt.core.AssetKey
-import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.Assertions.assertArrayEquals
-import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.assertThrows
-import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
 import java.nio.file.Path
 import java.security.GeneralSecurityException
+import org.junit.jupiter.api.Assertions.assertArrayEquals
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
+import org.junit.jupiter.api.io.TempDir
 
 class AssetArchiveTest {
-    @TempDir
-    lateinit var temporaryDirectory: Path
+    @TempDir lateinit var temporaryDirectory: Path
 
     @Test
     fun packsAndReadsEncryptedAssets() {
@@ -44,8 +43,6 @@ class AssetArchiveTest {
 
         AssetArchive.pack(source, archive, ArchiveOptions(password = "correct".toCharArray()))
 
-        assertThrows<GeneralSecurityException> {
-            AssetArchive.open(archive, "wrong".toCharArray())
-        }
+        assertThrows<GeneralSecurityException> { AssetArchive.open(archive, "wrong".toCharArray()) }
     }
 }

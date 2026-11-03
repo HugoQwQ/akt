@@ -20,11 +20,19 @@ import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 import kotlin.io.path.relativeTo
 
+/**
+ * controls akt archive creation.
+ *
+ * @property compressionLevel raw deflate level from best speed to best compression.
+ * @property password optional password for aes-gcm encryption. callers should clear their password
+ *   buffer after use.
+ */
 public data class ArchiveOptions(
     public val compressionLevel: Int = Deflater.BEST_COMPRESSION,
     public val password: CharArray? = null,
 )
 
+/** packs and opens akt asset archives. */
 public object AssetArchive {
     private const val magic: Int = 0x414b5431
     private const val version: Int = 1
@@ -36,6 +44,18 @@ public object AssetArchive {
     private const val defaultIterations: Int = 210_000
     private val random: SecureRandom = SecureRandom()
 
+    /**
+     * packs every regular file below [sourceDirectory] into [archivePath].
+     *
+     * asset keys are relative paths with forward slashes and are sorted before packing. the output
+     * parent directory is created when needed.
+     *
+     * @param sourceDirectory existing directory containing source assets.
+     * @param archivePath output archive path.
+     * @param options compression and encryption settings.
+     * @throws IllegalArgumentException when the source directory is missing, compression is
+     *   invalid, or the password is empty.
+     */
     public fun pack(
         sourceDirectory: Path,
         archivePath: Path,
@@ -49,12 +69,8 @@ public object AssetArchive {
         require(password == null || password.isNotEmpty()) { "password cannot be empty" }
 
         val root = sourceDirectory.toAbsolutePath().normalize()
-        val files = Files.walk(root).use { paths ->
-            paths
-                .filter(Files::isRegularFile)
-                .sorted()
-                .toList()
-        }
+        val files =
+            Files.walk(root).use { paths -> paths.filter(Files::isRegularFile).sorted().toList() }
 
         val entryPayload = ByteArrayOutputStream()
         DataOutputStream(entryPayload).use { output ->
@@ -73,11 +89,12 @@ public object AssetArchive {
         val salt = ByteArray(saltLength).also(random::nextBytes)
         val nonce = ByteArray(nonceLength).also(random::nextBytes)
         val flags = if (password == null) 0 else encryptedFlag
-        val body = if (password == null) {
-            entryPayload.toByteArray()
-        } else {
-            encrypt(entryPayload.toByteArray(), password, salt, nonce)
-        }
+        val body =
+            if (password == null) {
+                entryPayload.toByteArray()
+            } else {
+                encrypt(entryPayload.toByteArray(), password, salt, nonce)
+            }
 
         Files.createDirectories(archivePath.toAbsolutePath().parent)
         Files.newOutputStream(archivePath).use { stream ->
@@ -94,6 +111,16 @@ public object AssetArchive {
         }
     }
 
+    /**
+     * reads an akt archive into random-access memory.
+     *
+     * @param archivePath archive file to open.
+     * @param password password for an encrypted archive, or null for an unencrypted archive.
+     * @throws IllegalArgumentException when the archive header, flags, sizes, or password presence
+     *   are invalid.
+     * @throws GeneralSecurityException when authentication fails because the password is wrong or
+     *   the archive is corrupt.
+     */
     public fun open(
         archivePath: Path,
         password: CharArray? = null,
@@ -112,15 +139,18 @@ public object AssetArchive {
             val body = input.readNBytes(bodyLength)
             require(body.size == bodyLength) { "akt archive is truncated" }
 
-            val payload = if (flags and encryptedFlag != 0) {
-                require(password != null && password.isNotEmpty()) {
-                    "this akt archive requires a password"
+            val payload =
+                if (flags and encryptedFlag != 0) {
+                    require(password != null && password.isNotEmpty()) {
+                        "this akt archive requires a password"
+                    }
+                    decrypt(body, password, salt, nonce, iterations)
+                } else {
+                    require(password == null) {
+                        "an unencrypted akt archive does not use a password"
+                    }
+                    body
                 }
-                decrypt(body, password, salt, nonce, iterations)
-            } else {
-                require(password == null) { "an unencrypted akt archive does not use a password" }
-                body
-            }
             return ArchiveAssetStore(readEntries(payload))
         }
     }
@@ -134,9 +164,7 @@ public object AssetArchive {
                 val key = AssetKey(input.readUTF())
                 val originalSize = input.readInt()
                 val compressedSize = input.readInt()
-                require(originalSize >= 0 && compressedSize >= 0) {
-                    "invalid archive entry size"
-                }
+                require(originalSize >= 0 && compressedSize >= 0) { "invalid archive entry size" }
                 val compressed = input.readNBytes(compressedSize)
                 require(compressed.size == compressedSize) { "akt archive entry is truncated" }
                 val raw = decompress(compressed, originalSize)
@@ -232,20 +260,20 @@ public object AssetArchive {
     ): ByteArray {
         val spec = PBEKeySpec(password, salt, iterations, keyLengthBits)
         return try {
-            SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-                .generateSecret(spec)
-                .encoded
+            SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded
         } finally {
             spec.clearPassword()
         }
     }
 }
 
-public class ArchiveAssetStore internal constructor(
-    private val entries: Map<AssetKey, ByteArray>,
-) : AssetStore {
+/** an in-memory asset store created by [AssetArchive.open]. */
+public class ArchiveAssetStore internal constructor(private val entries: Map<AssetKey, ByteArray>) :
+    AssetStore {
+    /** all asset keys contained in this archive. */
     public val keys: Set<AssetKey>
         get() = entries.keys
 
+    /** returns a defensive copy of the bytes for [key], or null when absent. */
     override fun read(key: AssetKey): ByteArray? = entries[key]?.copyOf()
 }

@@ -9,9 +9,7 @@ import io.hugouwu.akt.ui.ChoiceItem
 import io.hugouwu.akt.ui.UiScene
 import kotlin.math.min
 
-internal class StoryController(
-    story: StoryDefinition,
-) {
+internal class StoryController(story: StoryDefinition) {
     private val session: StorySession = StorySession(story)
     private var frame: StoryFrame = session.frame()
     private var revealedCharacters: Float = 0f
@@ -25,22 +23,25 @@ internal class StoryController(
         get() = frame.text.take(revealedCharacters.toInt().coerceAtMost(frame.text.length))
 
     internal val transitionAlpha: Float
-        get() = when {
-            transitionDuration <= 0f -> 1f
-            else -> (transitionElapsed / transitionDuration).coerceIn(0f, 1f)
-        }
+        get() =
+            when {
+                transitionDuration <= 0f -> 1f
+                else -> (transitionElapsed / transitionDuration).coerceIn(0f, 1f)
+            }
 
     internal fun update(
         deltaSeconds: Float,
         input: InputFrame,
         previousScene: UiScene?,
     ) {
-        val clickedChoice = input.pointer?.let { pointer ->
-            previousScene?.items
-                ?.filterIsInstance<ChoiceItem>()
-                ?.firstOrNull { it.bounds.contains(pointer) }
-                ?.index
-        }
+        val clickedChoice =
+            input.pointer?.let { pointer ->
+                previousScene
+                    ?.items
+                    ?.filterIsInstance<ChoiceItem>()
+                    ?.firstOrNull { it.bounds.contains(pointer) }
+                    ?.index
+            }
         val requestedChoice = input.choiceIndex ?: clickedChoice
 
         when {
@@ -62,12 +63,14 @@ internal class StoryController(
 
         if (!frame.isAwaitingChoice) {
             val speed = frame.textStyle.revealSpeed.toFloat()
-            revealedCharacters = min(
-                frame.text.length.toFloat(),
-                revealedCharacters + speed * deltaSeconds.coerceAtLeast(0f),
-            )
+            revealedCharacters =
+                min(
+                    frame.text.length.toFloat(),
+                    revealedCharacters + speed * deltaSeconds.coerceAtLeast(0f),
+                )
         }
-        transitionElapsed = min(transitionDuration, transitionElapsed + deltaSeconds.coerceAtLeast(0f))
+        transitionElapsed =
+            min(transitionDuration, transitionElapsed + deltaSeconds.coerceAtLeast(0f))
     }
 
     private fun advance() {

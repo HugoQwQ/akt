@@ -1,27 +1,24 @@
 package io.hugouwu.akt.core
 
-import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 
 class StorySessionTest {
-    private val story: StoryDefinition = visualNovel("test story") {
-        character("mira", "mira")
-        scene("platform") {
-            say("mira", "first line")
-            say("mira", "second line")
-            choice("leave", "leave", "leave")
-            choice("stay", "stay", "stay")
+    private val story: StoryDefinition =
+        visualNovel("test story") {
+            character("mira", "mira")
+            scene("platform") {
+                say("mira", "first line")
+                say("mira", "second line")
+                choice("leave", "leave", "leave")
+                choice("stay", "stay", "stay")
+            }
+            scene("leave") { narrate("the platform emptied.") }
+            scene("stay") { narrate("the station clock stopped.") }
+            start("platform")
         }
-        scene("leave") {
-            narrate("the platform emptied.")
-        }
-        scene("stay") {
-            narrate("the station clock stopped.")
-        }
-        start("platform")
-    }
 
     @Test
     fun advancesThroughDialogueAndChoices() {
@@ -46,8 +43,6 @@ class StorySessionTest {
         session.advance()
         session.advance()
 
-        assertThrows<IllegalArgumentException> {
-            session.choose("missing")
-        }
+        assertThrows<IllegalArgumentException> { session.choose("missing") }
     }
 }

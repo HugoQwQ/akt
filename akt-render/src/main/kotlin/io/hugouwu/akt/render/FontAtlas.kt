@@ -32,11 +32,12 @@ internal class FontAtlas {
     init {
         val count = lastCharacter.code - firstCharacter.code + 1
         val rows = ceil(count.toDouble() / columns).toInt()
-        val image = BufferedImage(
-            columns * cellWidth,
-            rows * cellHeight,
-            BufferedImage.TYPE_INT_ARGB,
-        )
+        val image =
+            BufferedImage(
+                columns * cellWidth,
+                rows * cellHeight,
+                BufferedImage.TYPE_INT_ARGB,
+            )
         width = image.width
         height = image.height
         val graphics: Graphics2D = image.createGraphics()
@@ -57,13 +58,14 @@ internal class FontAtlas {
             val left = column * cellWidth
             val top = row * cellHeight
             graphics.drawString(character.toString(), left + 2, top + metrics.ascent + 2)
-            generated[character] = Glyph(
-                u0 = left.toFloat() / image.width,
-                v0 = top.toFloat() / image.height,
-                u1 = (left + cellWidth).toFloat() / image.width,
-                v1 = (top + cellHeight).toFloat() / image.height,
-                advance = metrics.charWidth(character).toFloat(),
-            )
+            generated[character] =
+                Glyph(
+                    u0 = left.toFloat() / image.width,
+                    v0 = top.toFloat() / image.height,
+                    u1 = (left + cellWidth).toFloat() / image.width,
+                    v1 = (top + cellHeight).toFloat() / image.height,
+                    advance = metrics.charWidth(character).toFloat(),
+                )
         }
         graphics.dispose()
         glyphs = generated
@@ -75,9 +77,7 @@ internal class FontAtlas {
 
     internal fun measure(text: String, size: Float): Float {
         val scale = size / atlasFontSize
-        return text.sumOf { character ->
-            glyph(character).advance.toDouble() * scale
-        }.toFloat()
+        return text.sumOf { character -> glyph(character).advance.toDouble() * scale }.toFloat()
     }
 
     internal fun wrap(text: String, maxWidth: Float, size: Float): List<String> {

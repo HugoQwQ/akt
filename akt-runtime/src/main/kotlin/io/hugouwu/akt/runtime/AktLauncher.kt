@@ -4,9 +4,15 @@ import io.hugouwu.akt.ui.UiScene
 import io.hugouwu.akt.ui.VisualNovelLayout
 import org.slf4j.LoggerFactory
 
+/** desktop game loop used by [AktGame.run]. */
 public object AktLauncher {
     private val logger = LoggerFactory.getLogger(AktLauncher::class.java)
 
+    /**
+     * runs [game] until the renderer or user requests shutdown.
+     *
+     * @throws IllegalStateException when the renderer cannot start.
+     */
     public fun run(game: AktGame) {
         logger.info("starting game '{}'", game.story.title)
         val layout = VisualNovelLayout()
@@ -24,13 +30,14 @@ public object AktLauncher {
                 if (input.closeRequested) break
                 controller.update(deltaSeconds, input, previousScene)
 
-                val scene = layout.layout(
-                    frame = controller.currentFrame,
-                    width = game.window.width.toFloat(),
-                    height = game.window.height.toFloat(),
-                    visibleText = controller.visibleText,
-                    transitionAlpha = controller.transitionAlpha,
-                )
+                val scene =
+                    layout.layout(
+                        frame = controller.currentFrame,
+                        width = game.window.width.toFloat(),
+                        height = game.window.height.toFloat(),
+                        visibleText = controller.visibleText,
+                        transitionAlpha = controller.transitionAlpha,
+                    )
                 renderer.render(scene)
                 previousScene = scene
             }
