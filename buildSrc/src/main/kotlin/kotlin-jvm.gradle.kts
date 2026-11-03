@@ -1,5 +1,6 @@
 package buildsrc.convention
 
+import gradle.kotlin.dsl.accessors._3ddfb3b145513996458196abc6952e4c.java
 import org.gradle.api.artifacts.VersionCatalogsExtension
 import org.gradle.api.tasks.testing.logging.TestLogEvent
 
