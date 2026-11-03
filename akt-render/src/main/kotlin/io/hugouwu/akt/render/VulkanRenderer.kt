@@ -76,7 +76,6 @@ import org.lwjgl.vulkan.KHRSwapchain.vkCreateSwapchainKHR
 import org.lwjgl.vulkan.KHRSwapchain.vkDestroySwapchainKHR
 import org.lwjgl.vulkan.KHRSwapchain.vkGetSwapchainImagesKHR
 import org.lwjgl.vulkan.KHRSwapchain.vkQueuePresentKHR
-import org.lwjgl.vulkan.VK10
 import org.lwjgl.vulkan.VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
 import org.lwjgl.vulkan.VK10.VK_ACCESS_SHADER_READ_BIT
 import org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT
@@ -225,7 +224,6 @@ import org.lwjgl.vulkan.VkCommandBuffer
 import org.lwjgl.vulkan.VkCommandBufferAllocateInfo
 import org.lwjgl.vulkan.VkCommandBufferBeginInfo
 import org.lwjgl.vulkan.VkCommandPoolCreateInfo
-import org.lwjgl.vulkan.VkDescriptorBufferInfo
 import org.lwjgl.vulkan.VkDescriptorImageInfo
 import org.lwjgl.vulkan.VkDescriptorPoolCreateInfo
 import org.lwjgl.vulkan.VkDescriptorPoolSize
@@ -242,7 +240,6 @@ import org.lwjgl.vulkan.VkFramebufferCreateInfo
 import org.lwjgl.vulkan.VkGraphicsPipelineCreateInfo
 import org.lwjgl.vulkan.VkImageCreateInfo
 import org.lwjgl.vulkan.VkImageMemoryBarrier
-import org.lwjgl.vulkan.VkImageSubresourceLayers
 import org.lwjgl.vulkan.VkImageViewCreateInfo
 import org.lwjgl.vulkan.VkInstance
 import org.lwjgl.vulkan.VkInstanceCreateInfo
@@ -2246,7 +2243,7 @@ public class VulkanRenderer(
         val bytes = javaClass.getResourceAsStream("/shaders/$name")?.use { stream ->
             stream.readBytes()
         } ?: error("shader '$name' is missing")
-        val buffer = org.lwjgl.system.MemoryUtil.memAlloc(bytes.size)
+        val buffer = memAlloc(bytes.size)
         buffer.put(bytes).flip()
         return buffer
     }
